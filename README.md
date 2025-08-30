@@ -1,2 +1,2 @@
-# ECE30816-Team34-Homework
+# ECE30816-Fall2025-Team34
 Team project repository for ECE30861 Software Engineering
