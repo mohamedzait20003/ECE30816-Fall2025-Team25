@@ -2,4 +2,7 @@
 Team project repository for ECE30861 Software Engineering
 
 ## Team Members
-Kareem
+- Mohamed Zaitoun
+- Sean Chen
+- Tegan Johnson
+- Kareem Hasan
