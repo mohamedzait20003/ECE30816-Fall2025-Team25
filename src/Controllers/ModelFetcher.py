@@ -5,6 +5,7 @@ from typing import List
 from ..Models.Model import ModelData
 from ..Services.Request_Service import RequestService
 
+
 class ModelFetcher:
     ''' Fetches model information from Hugging Face. '''
 
@@ -12,7 +13,9 @@ class ModelFetcher:
         '''Initializes the ModelFetcher with RequestService.'''
         self.service = RequestService()
 
-    def fetch_model(self, model_link: str, dataset_links: List[str] | None = None, code_link: str | None = None) -> ModelData:
+    def fetch_model(self, model_link: str,
+                    dataset_links: List[str] | None = None,
+                    code_link: str | None = None) -> ModelData:
         ''' Fetches model information from Hugging Face. '''
         model_data: ModelData = ModelData()
         model_data.id = self.service.model_link_to_id(model_link)
@@ -20,7 +23,9 @@ class ModelFetcher:
         model_data.info = self.service.get_model_info(model_data.id)
         model_data.card = model_data.info.card_data
         
-        model_data.readme_path = self.service.download_model_readme(model_data.id)
+        model_data.readme_path = self.service.download_model_readme(
+            model_data.id
+        )
 
         if dataset_links is not None:
             for dataset_link in dataset_links:
@@ -65,7 +70,9 @@ class ModelFetcher:
             token=os.getenv("GITHUB_TOKEN", "")
         ) if owner and repo else []
         model_data.repo_contributors = (
-            repo_contributors_result if isinstance(repo_contributors_result,list) else []
+            repo_contributors_result
+            if isinstance(repo_contributors_result, list)
+            else []
         )
 
         repo_commits_result = self.service.github_request(

@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 import requests
 
@@ -30,10 +30,14 @@ class LLMService:
         """Initialize the LLM service with API configuration."""
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
-            logging.warning("GEMINI_API_KEY not found in environment variables. LLM service will not be functional.")
+            logging.warning(
+                "GEMINI_API_KEY not found in environment variables. "
+                "LLM service will not be functional."
+            )
         
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-        self.default_model = "gemini-1.5-flash"  # You can change this to gemini-1.5-pro for more complex tasks
+        # You can change this to gemini-1.5-pro for more complex tasks
+        self.default_model = "gemini-1.5-flash"
         self.max_tokens = 8192
         self.temperature = 0.7
         
@@ -44,7 +48,12 @@ class LLMService:
         """Initialize common prompt templates."""
         self.prompt_templates = {
             "model_analysis": PromptTemplate(
-                system_prompt="""You are an expert AI researcher and model analyst. Your task is to analyze machine learning models and provide comprehensive insights based on the provided metadata and documentation.""",
+                system_prompt=(
+                    "You are an expert AI researcher and model analyst. "
+                    "Your task is to analyze machine learning models and "
+                    "provide comprehensive insights based on the provided "
+                    "metadata and documentation."
+                ),
                 user_prompt_template="""
                 Analyze the following machine learning model:
 
@@ -74,13 +83,18 @@ class LLMService:
                 6. Technical specifications
                 7. Overall assessment and recommendations
 
-                Format your response in clear sections with appropriate headings.
+                Format your response in clear sections with appropriate
+                headings.
                 """
-                            ),
-                            
-                            "dataset_summary": PromptTemplate(
-                                system_prompt="""You are a data science expert specializing in dataset analysis and curation. Provide clear, concise summaries of datasets.""",
-                                user_prompt_template="""
+                ),
+            
+            "dataset_summary": PromptTemplate(
+                system_prompt=(
+                    "You are a data science expert specializing in dataset "
+                    "analysis and curation. Provide clear, concise summaries "
+                    "of datasets."
+                ),
+                user_prompt_template="""
                 Summarize the following dataset:
 
                 **Dataset Name:** {dataset_name}
@@ -102,11 +116,15 @@ class LLMService:
 
                 Keep the summary concise but informative.
                 """
-                            ),
-                            
-                            "code_review": PromptTemplate(
-                                system_prompt="""You are a senior software engineer with expertise in machine learning codebases. Analyze code repositories and provide constructive feedback.""",
-                                user_prompt_template="""
+                ),
+            
+            "code_review": PromptTemplate(
+                system_prompt=(
+                    "You are a senior software engineer with expertise in "
+                    "machine learning codebases. Analyze code repositories "
+                    "and provide constructive feedback."
+                ),
+                user_prompt_template="""
                 Review the following code repository:
 
                 **Repository:** {repo_name}
@@ -148,7 +166,10 @@ class LLMService:
             Formatted prompt string
         """
         if template_name not in self.prompt_templates:
-            raise ValueError(f"Template '{template_name}' not found. Available templates: {list(self.prompt_templates.keys())}")
+            raise ValueError(
+                f"Template '{template_name}' not found. Available "
+                f"templates: {list(self.prompt_templates.keys())}"
+            )
         
         template = self.prompt_templates[template_name]
         
@@ -163,9 +184,13 @@ class LLMService:
             
         except KeyError as e:
             missing_key = str(e).strip("'")
-            raise ValueError(f"Missing required variable '{missing_key}' for template '{template_name}'")
+            raise ValueError(
+                f"Missing required variable '{missing_key}' for "
+                f"template '{template_name}'"
+            )
     
-    def prepare_custom_prompt(self, system_prompt: str, user_prompt: str, **context) -> str:
+    def prepare_custom_prompt(self, system_prompt: str, user_prompt: str,
+                              **context) -> str:
         """
         Prepare a custom prompt with system and user components.
         
@@ -178,13 +203,19 @@ class LLMService:
             Formatted prompt string
         """
         try:
-            formatted_user_prompt = user_prompt.format(**context) if context else user_prompt
+            if context:
+                formatted_user_prompt = user_prompt.format(**context)
+            else:
+                formatted_user_prompt = user_prompt
             return f"{system_prompt}\n\n{formatted_user_prompt}"
         except KeyError as e:
             missing_key = str(e).strip("'")
-            raise ValueError(f"Missing context variable '{missing_key}' for custom prompt")
+            raise ValueError(
+                f"Missing context variable '{missing_key}' for custom prompt"
+            )
     
-    def call_gemini_api(self, prompt: str, model: Optional[str] = None, **generation_config) -> LLMResponse:
+    def call_gemini_api(self, prompt: str, model: Optional[str] = None,
+                        **generation_config) -> LLMResponse:
         """
         Make a direct API call to Gemini using REST API.
         
@@ -197,7 +228,9 @@ class LLMService:
             LLMResponse object with the API response
         """
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY not configured. Cannot make API calls.")
+            raise ValueError(
+                "GEMINI_API_KEY not configured. Cannot make API calls."
+            )
         
         model_name = model or self.default_model
         url = f"{self.base_url}/models/{model_name}:generateContent"
@@ -210,8 +243,12 @@ class LLMService:
                 }]
             }],
             "generationConfig": {
-                "temperature": generation_config.get("temperature", self.temperature),
-                "maxOutputTokens": generation_config.get("max_tokens", self.max_tokens),
+                "temperature": generation_config.get(
+                    "temperature", self.temperature
+                ),
+                "maxOutputTokens": generation_config.get(
+                    "max_tokens", self.max_tokens
+                ),
                 "topP": generation_config.get("top_p", 0.95),
                 "topK": generation_config.get("top_k", 40)
             }
@@ -226,7 +263,9 @@ class LLMService:
         }
         
         try:
-            response = requests.post(url, json=payload, headers=headers, params=params)
+            response = requests.post(
+                url, json=payload, headers=headers, params=params
+            )
             response.raise_for_status()
             
             response_data = response.json()
@@ -234,7 +273,9 @@ class LLMService:
             # Extract content from response
             candidates = response_data.get("candidates", [])
             if not candidates:
-                raise ValueError("No response candidates received from Gemini API")
+                raise ValueError(
+                    "No response candidates received from Gemini API"
+                )
             
             content_parts = candidates[0].get("content", {}).get("parts", [])
             if not content_parts:
@@ -274,8 +315,12 @@ class LLMService:
         context = {
             "model_name": getattr(model_data, 'id', 'Unknown'),
             "model_id": getattr(model_data, 'id', 'Unknown'),
-            "model_description": str(getattr(model_data, 'card', 'No description available')),
-            "model_card": str(getattr(model_data, 'card', 'No model card available')),
+            "model_description": str(getattr(
+                model_data, 'card', 'No description available'
+            )),
+            "model_card": str(getattr(
+                model_data, 'card', 'No model card available'
+            )),
             "readme_content": self._get_readme_content(model_data),
             "datasets_info": self._format_datasets_info(model_data),
             "repo_info": self._format_repo_info(model_data)
@@ -285,7 +330,8 @@ class LLMService:
         prompt = self.prepare_prompt("model_analysis", **context)
         return self.call_gemini_api(prompt)
     
-    def summarize_dataset(self, dataset_id: str, dataset_info, dataset_card) -> LLMResponse:
+    def summarize_dataset(self, dataset_id: str, dataset_info,
+                          dataset_card) -> LLMResponse:
         """
         Summarize a dataset using the dataset_summary template.
         
@@ -300,8 +346,14 @@ class LLMService:
         context = {
             "dataset_name": dataset_id,
             "dataset_id": dataset_id,
-            "dataset_card": str(dataset_card) if dataset_card else "No dataset card available",
-            "dataset_info": str(dataset_info) if dataset_info else "No dataset info available"
+            "dataset_card": (
+                str(dataset_card) if dataset_card
+                else "No dataset card available"
+            ),
+            "dataset_info": (
+                str(dataset_info) if dataset_info
+                else "No dataset info available"
+            )
         }
         
         prompt = self.prepare_prompt("dataset_summary", **context)
@@ -321,11 +373,16 @@ class LLMService:
         
         context = {
             "repo_name": repo_metadata.get('full_name', 'Unknown Repository'),
-            "repo_description": repo_metadata.get('description', 'No description available'),
+            "repo_description": repo_metadata.get(
+                'description', 'No description available'
+            ),
             "repo_contents": self._format_repo_contents(model_data),
             "contributors": self._format_contributors(model_data),
             "recent_commits": self._format_commits(model_data),
-            "repo_metadata": json.dumps(repo_metadata, indent=2) if repo_metadata else "No metadata available"
+            "repo_metadata": (
+                json.dumps(repo_metadata, indent=2) if repo_metadata
+                else "No metadata available"
+            )
         }
         
         prompt = self.prepare_prompt("code_review", **context)
@@ -338,7 +395,10 @@ class LLMService:
             try:
                 with open(readme_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    return content[:2000] + "..." if len(content) > 2000 else content
+                    if len(content) > 2000:
+                        return content[:2000] + "..."
+                    else:
+                        return content
             except Exception as e:
                 logging.warning(f"Failed to read README file: {e}")
         return "No README content available"
@@ -359,12 +419,17 @@ class LLMService:
         
         info = []
         info.append(f"Repository: {repo_metadata.get('full_name', 'Unknown')}")
-        info.append(f"Description: {repo_metadata.get('description', 'No description')}")
+        info.append(
+            f"Description: "
+            f"{repo_metadata.get('description', 'No description')}"
+        )
         info.append(f"Stars: {repo_metadata.get('stargazers_count', 0)}")
         info.append(f"Forks: {repo_metadata.get('forks_count', 0)}")
         info.append(f"Language: {repo_metadata.get('language', 'Unknown')}")
         info.append(f"Created: {repo_metadata.get('created_at', 'Unknown')}")
-        info.append(f"Last Updated: {repo_metadata.get('updated_at', 'Unknown')}")
+        info.append(
+            f"Last Updated: {repo_metadata.get('updated_at', 'Unknown')}"
+        )
         
         return "\n".join(info)
     
@@ -408,7 +473,8 @@ class LLMService:
         formatted = []
         for commit in commits[:5]:  # Limit to 5 most recent commits
             commit_info = commit.get('commit', {})
-            message = commit_info.get('message', '').split('\n')[0]  # First line only
+            # First line only
+            message = commit_info.get('message', '').split('\n')[0]
             author_info = commit_info.get('author', {})
             author = author_info.get('name', 'Unknown')
             date = author_info.get('date', 'Unknown')
@@ -417,7 +483,8 @@ class LLMService:
         
         return "\n".join(formatted)
     
-    def add_custom_template(self, name: str, system_prompt: str, user_prompt_template: str) -> None:
+    def add_custom_template(self, name: str, system_prompt: str,
+                            user_prompt_template: str) -> None:
         """
         Add a custom prompt template.
         
