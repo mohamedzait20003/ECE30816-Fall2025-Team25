@@ -1,6 +1,12 @@
-from typing import List, Optional, Union
+from typing import List, Optional
 
-from huggingface_hub import DatasetCard, DatasetCardData, DatasetInfo, ModelCardData, ModelInfo
+from huggingface_hub import (
+    DatasetCardData,
+    DatasetInfo,
+    ModelCardData,
+    ModelInfo,
+)
+
 
 class ModelData:
     ''' Data class to hold model information and metadata. '''
