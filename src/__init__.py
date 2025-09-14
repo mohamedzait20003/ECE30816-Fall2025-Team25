@@ -1,3 +1,0 @@
-"""
-Trustworthy Model CLI Package
-"""

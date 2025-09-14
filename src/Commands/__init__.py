@@ -1,1 +1,0 @@
-"""Commands module for CLI functionality."""
