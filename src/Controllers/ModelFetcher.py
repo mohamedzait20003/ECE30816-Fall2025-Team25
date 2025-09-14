@@ -2,8 +2,8 @@
 import os
 import logging
 from typing import List
-from ..Models.Model import ModelData
-from ..Services.Request_Service import RequestService
+from Models.Model import ModelData
+from Services.Request_Service import RequestService
 
 
 class ModelFetcher:

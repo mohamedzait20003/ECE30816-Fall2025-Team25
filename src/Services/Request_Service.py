@@ -1,4 +1,3 @@
-
 import requests
 import logging
 import os
@@ -10,24 +9,30 @@ from huggingface_hub import DatasetInfo, HfApi, ModelInfo, hf_hub_download
 class RequestService:
     GITHUB_API_BASE = "https://api.github.com"
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize RequestService with Hugging Face API."""
         hf_token: str | None = os.getenv("HF_TOKEN")
         if hf_token is None:
-            logging.error("Hugging Face token not found in environment variables.")
-            raise ValueError("Hugging Face token not found in environment variables.")
-        
+            logging.error(
+                "Hugging Face token not found in environment variables."
+            )
+            raise ValueError(
+                "Hugging Face token not found in environment variables."
+            )
+
         self.hf_api = HfApi(
             endpoint="https://huggingface.co",
             token=hf_token
         )
-        
+
         self.hf_token = hf_token
 
     @staticmethod
     def model_link_to_id(model_link: str) -> str:
         ''' Converts a Hugging Face model link to a model ID. '''
-        match = re.search(r"huggingface\.co/([^/]+/[^/]+)", model_link)
+        match = re.search(
+            r"huggingface\.co/([^/]+/[^/]+)", model_link
+        )
         if match:
             return match.group(1)
         raise ValueError(f"Invalid model link: {model_link}")
@@ -35,7 +40,9 @@ class RequestService:
     @staticmethod
     def dataset_link_to_id(dataset_link: str) -> str:
         ''' Converts a Hugging Face dataset link to a dataset ID. '''
-        match = re.search(r"huggingface\.co/datasets/([^/]+/[^/]+)", dataset_link)
+        match = re.search(
+            r"huggingface\.co/datasets/([^/]+/[^/]+)", dataset_link
+        )
         if match:
             return match.group(1)
         raise ValueError(f"Invalid dataset link: {dataset_link}")
@@ -43,7 +50,9 @@ class RequestService:
     @staticmethod
     def code_link_to_repo(code_link: str) -> tuple[str, str]:
         ''' Converts a code repository link to a repo identifier. '''
-        match = re.search(r"github\.com/([^/]+)/([^/]+)", code_link)
+        match = re.search(
+            r"github\.com/([^/]+)/([^/]+)", code_link
+        )
         if not match:
             raise ValueError(f"Invalid GitHub repo URL: {code_link}")
         owner = match.group(1)
@@ -51,23 +60,39 @@ class RequestService:
         return owner, repo
 
     @staticmethod
-    def github_request(path: str, token: str, params: dict | None = None) -> dict | list:
+    def github_request(
+        path: str,
+        token: str,
+        params: dict | None = None
+    ) -> dict | list:
         headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json",
         }
         url = f"{RequestService.GITHUB_API_BASE}{path}"
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(
+            url, headers=headers, params=params
+        )
         if response.status_code != 200:
-            raise ValueError(f"GitHub API request failed: {response.status_code} {response.text}")
+            raise ValueError(
+                f"GitHub API request failed: {response.status_code} "
+                f"{response.text}"
+            )
         return response.json()
 
     @staticmethod
-    def get_repo_contents(owner: str, repo: str, token: str, path: str = "") -> list:
+    def get_repo_contents(
+        owner: str,
+        repo: str,
+        token: str,
+        path: str = ""
+    ) -> list:
         ''' Retrieves the contents of a GitHub repository. '''
         if path:
             path = f"/{path.lstrip('/')}"
-        req = RequestService.github_request(path=f"/repos/{owner}/{repo}/contents{path}", token=token)
+        req = RequestService.github_request(
+            path=f"/repos/{owner}/{repo}/contents{path}", token=token
+        )
         assert isinstance(req, list), "Expected a list of contents"
         return req
 
@@ -88,5 +113,7 @@ class RequestService:
                 token=self.hf_token,
             )
         except Exception as e:
-            logging.warning(f"README.md not found for model {model_id}: {e}")
+            logging.warning(
+                f"README.md not found for model {model_id}: {e}"
+            )
             return None

@@ -1,11 +1,10 @@
 from dotenv import load_dotenv
-from .Controllers.ModelFetcher import ModelFetcher
+from Controllers.ModelFetcher import ModelFetcher
 
 # Load environment variables from .env file BEFORE importing other modules
 load_dotenv()
 
 if __name__ == "__main__":
-
     fetcher = ModelFetcher()
     dataset_links = [
         "https://huggingface.co/datasets/xlangai/AgentNet",
