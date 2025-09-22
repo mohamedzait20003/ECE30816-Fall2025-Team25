@@ -75,8 +75,8 @@ if __name__ == "__main__":
         )
 
     service = ModelMetricService()
-    # performance_claims = service.EvaluatePerformanceClaims(model_data)
-    # print(f"Performance Claims Score: {performance_claims.value}")
+    performance_claims = service.EvaluatePerformanceClaims(model_data)
+    print(f"Performance Claims Score: {performance_claims.value}")
 
     bus_factor = service.EvaluateBusFactor(model_data)
     print(f"Bus Factor Score: {bus_factor.value}")

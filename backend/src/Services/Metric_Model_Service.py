@@ -70,24 +70,62 @@ class ModelMetricService:
             )
 
         def parse_llm_response(response: str) -> Dict[str, Any]:
-            obj = json.loads(response)  # let it raise if bad JSON
-            return {
-                "has_benchmark_datasets": bool(
-                    obj.get("has_benchmark_datasets", False)
-                ),
-                "has_quantitative_results": bool(
-                    obj.get("has_quantitative_results", False)
-                ),
-                "has_baseline_or_sota_comparison": bool(
-                    obj.get("has_baseline_or_sota_comparison", False)
-                ),
-                "notes": str(obj.get("notes", ""))[:400],
-            }
+            try:
+                if not response or not response.strip():
+                    logging.warning("Empty LLM response received")
+                    return {
+                        "has_benchmark_datasets": False,
+                        "has_quantitative_results": False,
+                        "has_baseline_or_sota_comparison": False,
+                        "notes": "Empty response from LLM"
+                    }
+                
+                # Strip markdown code block formatting if present
+                clean_response = response.strip()
+                if clean_response.startswith("```json"):
+                    clean_response = clean_response[7:]  # Remove ```json
+                if clean_response.startswith("```"):
+                    clean_response = clean_response[3:]   # Remove ```
+                if clean_response.endswith("```"):
+                    clean_response = clean_response[:-3]  # Remove trailing ```
+                clean_response = clean_response.strip()
+                
+                obj = json.loads(clean_response)
+                return {
+                    "has_benchmark_datasets": bool(
+                        obj.get("has_benchmark_datasets", False)
+                    ),
+                    "has_quantitative_results": bool(
+                        obj.get("has_quantitative_results", False)
+                    ),
+                    "has_baseline_or_sota_comparison": bool(
+                        obj.get("has_baseline_or_sota_comparison", False)
+                    ),
+                    "notes": str(obj.get("notes", ""))[:400],
+                }
+            except json.JSONDecodeError as e:
+                logging.warning(f"Failed to parse LLM response as JSON: {e}")
+                logging.warning(f"Raw response: {response[:200]}...")
+                return {
+                    "has_benchmark_datasets": False,
+                    "has_quantitative_results": False,
+                    "has_baseline_or_sota_comparison": False,
+                    "notes": f"JSON parse error: {str(e)[:100]}"
+                }
 
         try:
             prompt = prepare_llm_prompt(Data)
             response = self.llm_manager.call_gemini_api(prompt)
-            parsed = parse_llm_response(response.content)
+            
+            response_text = ""
+            if hasattr(response, 'content'):
+                response_text = response.content
+            elif isinstance(response, str):
+                response_text = response
+            else:
+                response_text = str(response)
+                
+            parsed = parse_llm_response(response_text)
 
             score = 0.0
             if parsed["has_benchmark_datasets"]:
@@ -383,7 +421,7 @@ class ModelMetricService:
                 details = {"error": "repo_metadata is not a dictionary"}
 
             return MetricResult(
-                metric_type=MetricType.AVAILABILITY,
+                metric_type=MetricType.DATASET_AND_CODE_SCORE,
                 value=availability,
                 details=details,
                 latency_ms=0,
@@ -677,8 +715,8 @@ class ModelMetricService:
             logging.error(f"Failed to evaluate dataset quality: {e}")
             raise RuntimeError("Dataset quality evaluation failed") from e
 
-    def EvaluateRampUpTime(self, Model: ModelManager) -> MetricResult:
-        def _compose_source_text(data: ModelManager) -> str:
+    def EvaluateRampUpTime(self, Data: Model) -> MetricResult:
+        def _compose_source_text(data: Model) -> str:
             readme = ""
             path = getattr(data, "readme_path", None)
             if path:
@@ -692,8 +730,8 @@ class ModelMetricService:
                 text = text[:16000] + "\n\n...[truncated]..."
             return text
 
-        def prepare_llm_prompt(data: ModelManager) -> str:
-            assert isinstance(data, ModelManager)
+        def prepare_llm_prompt(data: Model) -> str:
+            assert isinstance(data, Model)
             text = _compose_source_text(data)
             return (
                 "You are evaluating a machine learning model card/README. "
@@ -707,11 +745,13 @@ class ModelMetricService:
                 "Definitions:\n"
                 "- Quality of example code: How comprehensive and"
                 " well-documented are the examples provided in the README?"
-                " (0.0 = none, 0.5 = excellent). Return a single float value.\n"
+                " (0.0 = none, 0.5 = excellent). Return a single "
+                "float value.\n"
                 "- Readme coverage: How detailed and clear is the README?"
                 " (Contains headings like 'Usage', 'Training Data', "
-                "'Evaluation', etc.)."
-                " (0.0 = none, 0.5 = excellent). Return a single float value.\n"
+                "'Evaluation', etc.)"
+                " (0.0 = none, 0.5 = excellent). Return a single "
+                "float value.\n"
                 "=== BEGIN TEXT ===\n"
                 f"{text}\n"
                 "=== END TEXT ===\n"
@@ -750,7 +790,7 @@ class ModelMetricService:
             }
 
         try:
-            prompt = prepare_llm_prompt(Model)
+            prompt = prepare_llm_prompt(Data)
             logging.info(f"Calling LLM with prompt length: {len(prompt)}")
             response = self.llm_manager.call_gemini_api(prompt)
             logging.info(f"LLM response object: {response}")
