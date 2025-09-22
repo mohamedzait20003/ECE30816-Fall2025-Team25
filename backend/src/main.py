@@ -1,4 +1,13 @@
+from dotenv import load_dotenv
+import logging
 from Controllers.Controller import Controller
+from Services.Metric_Model_Service import ModelMetricService
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure logging to see debug info
+logging.basicConfig(level=logging.INFO)
 
 if __name__ == "__main__":
     fetcher = Controller()
@@ -64,3 +73,16 @@ if __name__ == "__main__":
             f"by {author_info.get('name', 'Unknown')} "
             f"on {author_info.get('date', 'Unknown')}"
         )
+
+    service = ModelMetricService()
+    # performance_claims = service.EvaluatePerformanceClaims(model_data)
+    # print(f"Performance Claims Score: {performance_claims.value}")
+
+    bus_factor = service.EvaluateBusFactor(model_data)
+    print(f"Bus Factor Score: {bus_factor.value}")
+
+    size = service.EvaluateSize(model_data)
+    print(f"Model Size Score: {size.value}")
+    
+    ramp_up_time = service.EvaluateRampUpTime(model_data)
+    print(f"Ramp-Up Time Score: {ramp_up_time.value}")

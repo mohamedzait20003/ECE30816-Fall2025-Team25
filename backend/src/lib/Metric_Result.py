@@ -28,6 +28,7 @@ class MetricResult:
         error: Error message if calculation failed (None if success)
     """
     metric_type: MetricType
+    value: float
     details: Dict[str, Any]
     latency_ms: int
     error: Optional[str] = None
