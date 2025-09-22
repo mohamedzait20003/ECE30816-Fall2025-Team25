@@ -1,11 +1,7 @@
-from dotenv import load_dotenv
-from Controllers.ModelFetcher import ModelFetcher
-
-# Load environment variables from .env file BEFORE importing other modules
-load_dotenv()
+from Controllers.Controller import Controller
 
 if __name__ == "__main__":
-    fetcher = ModelFetcher()
+    fetcher = Controller()
     dataset_links = [
         "https://huggingface.co/datasets/xlangai/AgentNet",
         "https://huggingface.co/datasets/osunlp/UGround-V1-Data",
@@ -14,7 +10,7 @@ if __name__ == "__main__":
     code_link = "https://github.com/xlang-ai/OpenCUA"
     model_link = "https://huggingface.co/xlangai/OpenCUA-32B"
 
-    model_data = fetcher.fetch_model(
+    model_data = fetcher.fetch(
         model_link,
         dataset_links=dataset_links,
         code_link=code_link
