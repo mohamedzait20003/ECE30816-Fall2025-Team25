@@ -93,5 +93,5 @@ if __name__ == "__main__":
     codeQuality = service.EvaluateCodeQuality(model_data)
     print(f"Code Quality Score: {codeQuality.value}")
 
-    datasetQuality = service.EvaluateDatasetQuality(model_data)
+    datasetQuality = service.EvaluateDatasetsQuality(model_data)
     print(f"Dataset Quality Score: {datasetQuality.value}")

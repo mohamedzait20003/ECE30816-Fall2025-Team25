@@ -676,3 +676,99 @@ class ModelMetricService:
         except Exception as e:
             logging.error(f"Failed to evaluate dataset quality: {e}")
             raise RuntimeError("Dataset quality evaluation failed") from e
+
+    def EvaluateRampUpTime(self, Model: ModelManager) -> MetricResult:
+        def _compose_source_text(data: ModelManager) -> str:
+            readme = ""
+            path = getattr(data, "readme_path", None)
+            if path:
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        readme = fh.read()
+                except Exception:
+                    readme = ""
+            text = (readme).strip()
+            if len(text) > 16000:
+                text = text[:16000] + "\n\n...[truncated]..."
+            return text
+
+        def prepare_llm_prompt(data: ModelManager) -> str:
+            assert isinstance(data, ModelManager)
+            text = _compose_source_text(data)
+            return (
+                "You are evaluating a machine learning model card/README. "
+                "Only use the provided text. Return STRICT JSON with these "
+                "float fields and a short notes string:\n"
+                "{\n"
+                '  "quality_of_example_code": 0.3,\n'
+                '  "readme_coverage": 0.4,\n'
+                '  "notes": "brief rationale"\n'
+                "}\n\n"
+                "Definitions:\n"
+                "- Quality of example code: How comprehensive and"
+                " well-documented are the examples provided in the README?"
+                " (0.0 = none, 0.5 = excellent). Return a single float value.\n"
+                "- Readme coverage: How detailed and clear is the README?"
+                " (Contains headings like 'Usage', 'Training Data', "
+                "'Evaluation', etc.)."
+                " (0.0 = none, 0.5 = excellent). Return a single float value.\n"
+                "=== BEGIN TEXT ===\n"
+                f"{text}\n"
+                "=== END TEXT ===\n"
+            )
+
+        def parse_llm_response(response: str) -> Dict[str, Any]:
+            logging.info(f"LLM Response received: {repr(response)}")
+            if not response or not response.strip():
+                raise ValueError("Empty response from LLM")
+            
+            # Remove markdown code block markers if present
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]  # Remove ```json
+            if response.startswith("```"):
+                response = response[3:]   # Remove ```
+            if response.endswith("```"):
+                response = response[:-3]  # Remove trailing ```
+            response = response.strip()
+            
+            obj = json.loads(response)  # let it raise if bad JSON
+            
+            # Handle array values - take the first value if it's an array
+            quality_val = obj.get("quality_of_example_code", 0.0)
+            if isinstance(quality_val, list) and quality_val:
+                quality_val = quality_val[0]
+            
+            readme_val = obj.get("readme_coverage", 0.0)
+            if isinstance(readme_val, list) and readme_val:
+                readme_val = readme_val[0]
+            
+            return {
+                "quality_of_example_code": float(quality_val),
+                "readme_coverage": float(readme_val),
+                "notes": str(obj.get("notes", ""))[:400],
+            }
+
+        try:
+            prompt = prepare_llm_prompt(Model)
+            logging.info(f"Calling LLM with prompt length: {len(prompt)}")
+            response = self.llm_manager.call_gemini_api(prompt)
+            logging.info(f"LLM response object: {response}")
+            logging.info(f"LLM response content: {repr(response.content)}")
+            parsed = parse_llm_response(response.content)
+
+            score = 0.0
+            score += parsed["quality_of_example_code"]
+            score += parsed["readme_coverage"]
+
+            details = {"mode": "llm", **parsed}
+
+            return MetricResult(
+                metric_type=MetricType.RAMP_UP_TIME,
+                value=score,
+                details=details,
+                latency_ms=0,
+            )
+
+        except Exception as exc:
+            raise RuntimeError("LLM evaluation failed") from exc
