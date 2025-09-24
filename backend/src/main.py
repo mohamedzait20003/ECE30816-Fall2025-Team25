@@ -1,13 +1,167 @@
 from dotenv import load_dotenv
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Tuple, Dict
 from Controllers.Controller import Controller
 from Services.Metric_Model_Service import ModelMetricService
+from lib.Metric_Result import MetricResult
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Configure logging to see debug info
 logging.basicConfig(level=logging.INFO)
+
+
+def time_evaluation(eval_func: Callable, *args, **kwargs) -> \
+        Tuple[MetricResult, float]:
+    """
+    Times a single evaluation function and returns the result and execution
+    time.
+    
+    Args:
+        eval_func: The evaluation function to time
+        *args: Arguments to pass to the evaluation function
+        **kwargs: Keyword arguments to pass to the evaluation function
+    
+    Returns:
+        Tuple containing (MetricResult, execution_time_in_seconds)
+    """
+    start_time = time.perf_counter()
+    try:
+        result = eval_func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
+        return result, execution_time
+    except Exception as e:
+        end_time = time.perf_counter()
+        execution_time = end_time - start_time
+        logging.error(f"Error in evaluation {eval_func.__name__}: {e}")
+        raise
+
+
+def run_evaluations_sequential(model_data) -> \
+        Dict[str, Tuple[MetricResult, float]]:
+    """
+    Run all evaluations sequentially and time each one.
+    
+    Args:
+        model_data: The model data to evaluate
+        
+    Returns:
+        Dictionary mapping evaluation names to (result, time) tuples
+    """
+    service = ModelMetricService()
+    results = {}
+    
+    # Define all evaluations
+    evaluations = [
+        ("Performance Claims", service.EvaluatePerformanceClaims),
+        ("Bus Factor", service.EvaluateBusFactor),
+        ("Size", service.EvaluateSize),
+        ("Ramp-Up Time", service.EvaluateRampUpTime),
+        ("Availability", service.EvaluateAvailability),
+        ("Code Quality", service.EvaluateCodeQuality),
+        ("Dataset Quality", service.EvaluateDatasetsQuality)
+    ]
+    
+    print("Running evaluations sequentially...")
+    print("-" * 50)
+    
+    for name, eval_func in evaluations:
+        print(f"Starting: {name}")
+        result, exec_time = time_evaluation(eval_func, model_data)
+        results[name] = (result, exec_time)
+        print(f"Completed: {name} - Score: {result.value:.3f} - "
+              f"Time: {exec_time:.3f}s")
+    
+    return results
+
+
+def run_evaluations_parallel(model_data, max_workers: int = 4) -> \
+        Dict[str, Tuple[MetricResult, float]]:
+    """
+    Run all evaluations in parallel using ThreadPoolExecutor and time each one.
+    
+    Args:
+        model_data: The model data to evaluate
+        max_workers: Maximum number of worker threads (default: 4)
+        
+    Returns:
+        Dictionary mapping evaluation names to (result, time) tuples
+    """
+    service = ModelMetricService()
+    results = {}
+    
+    # Define all evaluations
+    evaluations = [
+        ("Performance Claims", service.EvaluatePerformanceClaims),
+        ("Bus Factor", service.EvaluateBusFactor),
+        ("Size", service.EvaluateSize),
+        ("Ramp-Up Time", service.EvaluateRampUpTime),
+        ("Availability", service.EvaluateAvailability),
+        ("Code Quality", service.EvaluateCodeQuality),
+        ("Dataset Quality", service.EvaluateDatasetsQuality)
+    ]
+    
+    print(f"Running evaluations in parallel (max_workers={max_workers})...")
+    print("-" * 50)
+    
+    # Submit all tasks to the thread pool
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all evaluations
+        future_to_name = {}
+        for name, eval_func in evaluations:
+            future = executor.submit(time_evaluation, eval_func, model_data)
+            future_to_name[future] = name
+            print(f"Submitted: {name}")
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_name):
+            name = future_to_name[future]
+            try:
+                result, exec_time = future.result()
+                results[name] = (result, exec_time)
+                print(f"Completed: {name} - Score: {result.value:.3f} - "
+                      f"Time: {exec_time:.3f}s")
+            except Exception as e:
+                print(f"Failed: {name} - Error: {e}")
+                # You might want to store the error in results or handle
+                # it differently
+                
+    return results
+
+
+def print_timing_summary(results: Dict[str, Tuple[MetricResult, float]],
+                         total_time: float):
+    """
+    Print a summary of all evaluation results and timing information.
+    
+    Args:
+        results: Dictionary mapping evaluation names to (result, time) tuples
+        total_time: Total execution time for all evaluations
+    """
+    print("\n" + "=" * 60)
+    print("EVALUATION SUMMARY")
+    print("=" * 60)
+    
+    total_eval_time = 0.0
+    for name, (result, exec_time) in results.items():
+        print(f"{name:<20}: Score = {result.value:.3f}, "
+              f"Time = {exec_time:.3f}s")
+        total_eval_time += exec_time
+    
+    print("-" * 60)
+    print(f"{'Total Eval Time':<20}: {total_eval_time:.3f}s")
+    print(f"{'Wall Clock Time':<20}: {total_time:.3f}s")
+    
+    if total_time > 0:
+        efficiency = (total_eval_time / total_time) * 100
+        print(f"{'Parallelism Efficiency':<20}: {efficiency:.1f}%")
+    
+    print("=" * 60)
+
 
 if __name__ == "__main__":
     fetcher = Controller()
@@ -19,79 +173,31 @@ if __name__ == "__main__":
     code_link = "https://github.com/xlang-ai/OpenCUA"
     model_link = "https://huggingface.co/xlangai/OpenCUA-32B"
 
+    # Fetch model data
+    print("Fetching model data...")
     model_data = fetcher.fetch(
         model_link,
         dataset_links=dataset_links,
         code_link=code_link
     )
+    print("Model data fetched successfully!")
 
-    print(f"Model ID: {model_data.id}")
-    print("Model Card (first 100 characters):")
-    if model_data.card is not None:
-        print(model_data.card.__str__()[:100])
+    # Choose execution mode
+    run_parallel = True  # Set to False for sequential execution
+    
+    if run_parallel:
+        # Run evaluations in parallel
+        start_time = time.perf_counter()
+        results = run_evaluations_parallel(model_data, max_workers=4)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        
+        print_timing_summary(results, total_time)
     else:
-        print("No model card available.")
-
-    print("README.md first 100 characters:")
-    if model_data.readme_path is not None:
-        with open(model_data.readme_path, "r", encoding="utf-8") as f:
-            readme_content = f.read()
-        print(readme_content[:100])
-    else:
-        print("README.md file not found for this model.")
-
-    print(f"Associated Datasets: {model_data.dataset_ids}")
-    print("Dataset Cards:")
-    for dataset_id, dataset_card in model_data.dataset_cards.items():
-        print(f"- {dataset_id} (first 100 characters):")
-        if dataset_card is not None:
-            print(dataset_card.__str__()[:100])
-        else:
-            print("No dataset card available.")
-
-    print("Code Repository Metadata (first 5 items):")
-    for key, value in list(model_data.repo_metadata.items())[:5]:
-        print(f"- {key}: {value}")
-
-    print("Code Repository Contents (first 5 items):")
-    for item in model_data.repo_contents[:5]:
-        print(f"- {item['name']} (type: {item['type']})")
-
-    print("Code Repository Contributors (first 5):")
-    for contributor in model_data.repo_contributors[:5]:
-        print(
-            f"- {contributor['login']} "
-            f"(contributions: {contributor['contributions']})"
-        )
-
-    print("Code Repository Recent Commits (most recent 5):")
-    for commit in model_data.repo_commit_history[:5]:
-        commit_info = commit.get("commit", {})
-        author_info = commit_info.get("author", {})
-        print(
-            f"- {commit_info.get('message', '').splitlines()[0]} "
-            f"by {author_info.get('name', 'Unknown')} "
-            f"on {author_info.get('date', 'Unknown')}"
-        )
-
-    service = ModelMetricService()
-    performance_claims = service.EvaluatePerformanceClaims(model_data)
-    print(f"Performance Claims Score: {performance_claims.value}")
-
-    bus_factor = service.EvaluateBusFactor(model_data)
-    print(f"Bus Factor Score: {bus_factor.value}")
-
-    size = service.EvaluateSize(model_data)
-    print(f"Model Size Score: {size.value}")
-
-    ramp_up_time = service.EvaluateRampUpTime(model_data)
-    print(f"Ramp-Up Time Score: {ramp_up_time.value}")
-
-    availability = service.EvaluateAvailability(model_data)
-    print(f"Availability Score: {availability.value}")
-
-    codeQuality = service.EvaluateCodeQuality(model_data)
-    print(f"Code Quality Score: {codeQuality.value}")
-
-    datasetQuality = service.EvaluateDatasetsQuality(model_data)
-    print(f"Dataset Quality Score: {datasetQuality.value}")
+        # Run evaluations sequentially
+        start_time = time.perf_counter()
+        results = run_evaluations_sequential(model_data)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        
+        print_timing_summary(results, total_time)
