@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import logging
 import time
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Tuple, Dict
 from Controllers.Controller import Controller
@@ -8,7 +9,7 @@ from Services.Metric_Model_Service import ModelMetricService
 from lib.Metric_Result import MetricResult
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # Configure logging to see debug info
 logging.basicConfig(level=logging.INFO)
@@ -100,7 +101,7 @@ def run_evaluations_parallel(model_data, max_workers: int = 4) -> \
         ("Bus Factor", service.EvaluateBusFactor),
         ("Size", service.EvaluateSize),
         ("Ramp-Up Time", service.EvaluateRampUpTime),
-        ("Availability", service.EvaluateAvailability),
+        ("Availability", service.EvaluateDatasetAndCodeAvailabilityScore),
         ("Code Quality", service.EvaluateCodeQuality),
         ("Dataset Quality", service.EvaluateDatasetsQuality)
     ]
