@@ -39,7 +39,7 @@ if __name__ == "__main__":
     ramp_up_time = service.EvaluateRampUpTime(model_data)
     print(f"Ramp-Up Time Score: {ramp_up_time.value}")
 
-    availability = service.EvaluateAvailability(model_data)
+    availability = service.EvaluateDatasetAndCodeAvailabilityScore(model_data)
     print(f"Availability Score: {availability.value}")
 
     codeQuality = service.EvaluateCodeQuality(model_data)
