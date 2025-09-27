@@ -788,3 +788,207 @@ class ModelMetricService:
 
         except Exception as exc:
             raise RuntimeError("LLM evaluation failed") from exc
+
+    def EvaluateLicense(self, Data: Model) -> MetricResult:
+        def _get_license_info(data: Model) -> str:
+            """Extract license information from all available sources"""
+            license_info = []
+            
+            # Check model card for license information
+            card_obj = getattr(data, "card", None)
+            if card_obj and isinstance(card_obj, dict):
+                # Common license fields in HuggingFace model cards
+                license_fields = ["license", "license_name", "license_link",
+                                  "license_url"]
+                for field in license_fields:
+                    if field in card_obj and card_obj[field]:
+                        license_info.append(f"{field}: {card_obj[field]}")
+                
+                # Check description for license mentions
+                description = card_obj.get("description", "")
+                license_words = [
+                    "license", "mit", "apache", "bsd", "gpl", "lgpl"
+                ]
+                if description and any(word in description.lower()
+                                       for word in license_words):
+                    license_info.append(f"description: {description}")
+            
+            # Check repository metadata for license
+            repo_metadata = getattr(data, "repo_metadata", {})
+            if isinstance(repo_metadata, dict):
+                repo_license = repo_metadata.get("license")
+                if repo_license:
+                    if isinstance(repo_license, dict):
+                        # GitHub API license object
+                        license_name = repo_license.get("name", "")
+                        license_key = repo_license.get("key", "")
+                        if license_name or license_key:
+                            license_info.append(
+                                f"repo_license: {license_name} "
+                                f"({license_key})")
+                    else:
+                        # Simple license string
+                        license_info.append(f"repo_license: {repo_license}")
+            
+            return "\n".join(license_info) if license_info else ""
+
+        def _classify_license(license_text: str) -> tuple:
+            """Classify license and return (score, type, reason)"""
+            if not license_text:
+                return 0.0, "rule_based", "No license information found"
+            
+            license_lower = license_text.lower()
+            
+            # PERMISSIVE LICENSES -> 1.0 (EXACTLY 1.0!)
+            permissive_licenses = {
+                "mit": "MIT License",
+                "bsd": "BSD License",
+                "bsd-2-clause": "BSD 2-Clause License",
+                "bsd-3-clause": "BSD 3-Clause License",
+                "apache": "Apache License",
+                "apache-2.0": "Apache License 2.0",
+                "apache 2.0": "Apache License 2.0",
+                "lgpl-2.1": "LGPL v2.1",
+                "lgpl v2.1": "LGPL v2.1",
+                "lgpl-3.0": "LGPL v3.0",
+                "lgpl v3.0": "LGPL v3.0",
+                "isc": "ISC License",
+                "unlicense": "Unlicense"
+            }
+            
+            for license_key, license_name in permissive_licenses.items():
+                if license_key in license_lower:
+                    return (1.0, "rule_based",
+                            f"Permissive license: {license_name}")
+            
+            # RESTRICTIVE/INCOMPATIBLE LICENSES -> 0.0 (EXACTLY 0.0!)
+            restrictive_licenses = {
+                "gpl-2.0": "GPL v2.0",
+                "gpl v2.0": "GPL v2.0",
+                "gpl-3.0": "GPL v3.0",
+                "gpl v3.0": "GPL v3.0",
+                "cc by-nc": "Creative Commons Non-Commercial",
+                "cc-by-nc": "Creative Commons Non-Commercial",
+                "non-commercial": "Non-Commercial License",
+                "proprietary": "Proprietary License",
+                "all rights reserved": "All Rights Reserved"
+            }
+            
+            for license_key, license_name in restrictive_licenses.items():
+                if license_key in license_lower:
+                    return (0.0, "rule_based",
+                            f"Restrictive license: {license_name}")
+            
+            # If contains license keywords but unclassified -> use LLM
+            license_keywords = ["license", "copyright", "terms", "conditions"]
+            if any(keyword in license_lower for keyword in license_keywords):
+                return (None, "llm_needed",
+                        "Custom license requires LLM analysis")
+            
+            # No clear license information -> 0.0
+            return 0.0, "rule_based", "Unclear or missing license information"
+
+        def _prepare_llm_prompt(license_text: str) -> str:
+            """Prepare LLM prompt for custom license analysis"""
+            return (
+                "OUTPUT FORMAT: JSON ONLY\n\n"
+                "Analyze this license text for permissiveness. "
+                "Return this JSON format:\n\n"
+                "{\n"
+                '  "permissiveness_score": 0.7,\n'
+                '  "license_type": "Custom permissive",\n'
+                '  "allows_commercial": true,\n'
+                '  "allows_modification": true,\n'
+                '  "notes": "Allows commercial use with attribution"\n'
+                "}\n\n"
+                "Scoring rules (STRICT):\n"
+                "- 1.0: MIT/Apache/BSD-like (very permissive)\n"
+                "- 0.8-0.9: Permissive with minor restrictions\n"
+                "- 0.5-0.7: Some commercial/modification limits\n"
+                "- 0.1-0.4: Significant restrictions\n"
+                "- 0.0: GPL/Non-commercial/Highly restrictive\n\n"
+                f"LICENSE TEXT:\n{license_text[:2000]}\n\n"
+                "RESPOND WITH JSON ONLY:"
+            )
+
+        def _parse_llm_response(response: str) -> Dict[str, Any]:
+            """Parse LLM response for license analysis"""
+            try:
+                obj = json.loads(response)
+                return {
+                    "permissiveness_score": float(
+                        obj.get("permissiveness_score", 0.0)),
+                    "license_type": str(obj.get("license_type", "Unknown")),
+                    "allows_commercial": bool(
+                        obj.get("allows_commercial", False)),
+                    "allows_modification": bool(
+                        obj.get("allows_modification", False)),
+                    "notes": str(obj.get("notes", ""))[:200],
+                }
+            except Exception:
+                return {
+                    "permissiveness_score": 0.0,
+                    "license_type": "Parse error",
+                    "allows_commercial": False,
+                    "allows_modification": False,
+                    "notes": "Failed to parse LLM response"
+                }
+
+        try:
+            # Extract license information from all sources
+            license_text = _get_license_info(Data)
+            
+            # Attempt rule-based classification first
+            score, classification_type, reason = _classify_license(
+                license_text)
+            
+            if score is not None:
+                # Successfully classified with rules
+                details = {
+                    "classification_method": classification_type,
+                    "license_text": license_text[:500] if license_text else "",
+                    "reason": reason,
+                }
+                
+                return MetricResult(
+                    metric_type=MetricType.LICENSE,
+                    value=score,
+                    details=details,
+                    latency_ms=0,
+                )
+            
+            else:
+                # Need LLM analysis for custom license
+                if not license_text:
+                    return MetricResult(
+                        metric_type=MetricType.LICENSE,
+                        value=0.0,
+                        details={"error": "No license information available"},
+                        latency_ms=0,
+                    )
+                
+                prompt = _prepare_llm_prompt(license_text)
+                response = self.llm_manager.call_genai_api(prompt)
+                logging.info(f"LLM license analysis: {response.content}")
+                
+                parsed = _parse_llm_response(response.content)
+                
+                # Ensure score is within valid range [0.0, 1.0]
+                llm_score = max(0.0, min(1.0, parsed["permissiveness_score"]))
+                
+                details = {
+                    "classification_method": "llm_analysis",
+                    "license_text": license_text[:500],
+                    "llm_analysis": parsed,
+                }
+                
+                return MetricResult(
+                    metric_type=MetricType.LICENSE,
+                    value=llm_score,
+                    details=details,
+                    latency_ms=0,
+                )
+
+        except Exception as e:
+            logging.error(f"Failed to evaluate license: {e}")
+            raise RuntimeError("License evaluation failed") from e
