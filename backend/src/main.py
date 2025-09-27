@@ -64,7 +64,8 @@ def run_evaluations_sequential(model_data) -> \
         ("Ramp-Up Time", service.EvaluateRampUpTime),
         ("Availability", service.EvaluateAvailability),
         ("Code Quality", service.EvaluateCodeQuality),
-        ("Dataset Quality", service.EvaluateDatasetsQuality)
+        ("Dataset Quality", service.EvaluateDatasetsQuality),
+        ("License", service.EvaluateLicense)
     ]
     
     print("Running evaluations sequentially...")
@@ -103,7 +104,8 @@ def run_evaluations_parallel(model_data, max_workers: int = 4) -> \
         ("Ramp-Up Time", service.EvaluateRampUpTime),
         ("Availability", service.EvaluateDatasetAndCodeAvailabilityScore),
         ("Code Quality", service.EvaluateCodeQuality),
-        ("Dataset Quality", service.EvaluateDatasetsQuality)
+        ("Dataset Quality", service.EvaluateDatasetsQuality),
+        ("License", service.EvaluateLicense)
     ]
     
     print(f"Running evaluations in parallel (max_workers={max_workers})...")
