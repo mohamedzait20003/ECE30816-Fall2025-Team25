@@ -4,14 +4,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from Models import Model
-from lib.LLM_Manager import LLMManager
+from lib.LLM_Manager import PurdueLLMManager
 from lib.Metric_Result import MetricResult, MetricType
 from Helpers import _parse_iso8601, _months_between
 
 
 class ModelMetricService:
     def __init__(self) -> None:
-        self.llm_manager = LLMManager()
+        self.llm_manager = PurdueLLMManager()
 
     def EvaluateModel(
         self, model_description: str, dataset_description: str
@@ -49,24 +49,24 @@ class ModelMetricService:
             assert isinstance(data, Model)
             text = _compose_source_text(data)
             return (
-                "You are evaluating a machine learning model card/README. "
-                "Only use the provided text. Return STRICT JSON with these "
-                "boolean fields and a short notes string:\n"
+                "OUTPUT FORMAT: JSON ONLY\n\n"
+                "Analyze the model documentation and return this exact JSON "
+                "format:\n\n"
                 "{\n"
                 '  "has_benchmark_datasets": true|false,\n'
                 '  "has_quantitative_results": true|false,\n'
                 '  "has_baseline_or_sota_comparison": true|false,\n'
-                '  "notes": "brief rationale"\n'
+                '  "notes": "Found GLUE scores and baseline comparisons"\n'
                 "}\n\n"
-                "Definitions:\n"
-                "- Benchmark datasets: named datasets (e.g., SQuAD, GLUE, "
-                "ImageNet, MMLU, etc.).\n"
-                "- Quantitative results: numeric metrics or tables "
-                "(accuracy, F1, BLEU, etc.).\n"
-                "- Baseline/SoTA: comparison vs prior or state-of-the-art.\n\n"
-                "=== BEGIN TEXT ===\n"
-                f"{text}\n"
-                "=== END TEXT ===\n"
+                "Criteria:\n"
+                "- has_benchmark_datasets: true if mentions datasets like "
+                "GLUE, SQuAD, ImageNet, MMLU\n"
+                "- has_quantitative_results: true if shows accuracy, F1, "
+                "BLEU scores or metrics tables\n"
+                "- has_baseline_or_sota_comparison: true if compares to "
+                "other models/baselines\n\n"
+                f"ANALYZE THIS TEXT:\n{text[:8000]}\n\n"
+                "RESPOND WITH JSON ONLY:"
             )
 
         def parse_llm_response(response: str) -> Dict[str, Any]:
@@ -115,7 +115,8 @@ class ModelMetricService:
 
         try:
             prompt = prepare_llm_prompt(Data)
-            response = self.llm_manager.call_gemini_api(prompt)
+            response = self.llm_manager.call_genai_api(prompt)
+            logging.info(f"LLM response content: {repr(response.content)}")
             
             response_text = ""
             if hasattr(response, 'content'):
@@ -321,7 +322,8 @@ class ModelMetricService:
             logging.error(f"Failed to evaluate model size: {e}")
             raise RuntimeError("Size evaluation failed") from e
 
-    def EvaluateDatasetAndCodeScore(self, Data: Model) -> MetricResult:
+    def EvaluateDatasetAndCodeAvailabilityScore(self,
+                                                Data: Model) -> MetricResult:
         def _compose_source_text(data: Model) -> str:
             readme = ""
             path = getattr(data, "readme_path", None)
@@ -344,26 +346,24 @@ class ModelMetricService:
             assert isinstance(data, Model)
             text = _compose_source_text(data)
             return (
-                "You are evaluating a machine learning model card/README "
-                "for dataset and code references. "
-                "Only use the provided text. Return STRICT JSON with these "
-                "boolean fields and a short notes string:\n"
+                "OUTPUT FORMAT: JSON ONLY\n\n"
+                "Check for dataset and code references. "
+                "Return this JSON format:\n\n"
                 "{\n"
-                '  "lists_training_datasets": true|false,\n'
-                '  "links_to_huggingface_datasets": true|false,\n'
-                '  "links_to_code_repo": true|false,\n'
-                '  "notes": "brief rationale"\n'
+                '  "lists_training_datasets": true,\n'
+                '  "links_to_huggingface_datasets": false,\n'
+                '  "links_to_code_repo": true,\n'
+                '  "notes": "Found dataset names and GitHub links"\n'
                 "}\n\n"
-                "Definitions:\n"
-                "- lists_training_datasets: README explicitly mentions "
-                "training datasets used (dataset names, descriptions).\n"
-                "- links_to_huggingface_datasets: Contains links to "
-                "Hugging Face Hub datasets (huggingface.co/datasets/).\n"
-                "- links_to_code_repo: Contains links to training/"
-                "fine-tuning code repositories (GitHub, GitLab, etc.).\n\n"
-                "=== BEGIN TEXT ===\n"
-                f"{text}\n"
-                "=== END TEXT ===\n"
+                "Criteria:\n"
+                "- lists_training_datasets: true if mentions specific "
+                "dataset names\n"
+                "- links_to_huggingface_datasets: true if has "
+                "huggingface.co/datasets/ URLs\n"
+                "- links_to_code_repo: true if has GitHub/GitLab "
+                "repository links\n\n"
+                f"ANALYZE THIS TEXT:\n{text[:6000]}\n\n"
+                "RESPOND WITH JSON ONLY:"
             )
 
         def parse_llm_response(response: str) -> Dict[str, Any]:
@@ -383,7 +383,8 @@ class ModelMetricService:
 
         try:
             prompt = prepare_llm_prompt(Data)
-            response = self.llm_manager.call_gemini_api(prompt)
+            response = self.llm_manager.call_genai_api(prompt)
+            logging.info(f"LLM response content: {repr(response.content)}")
             parsed = parse_llm_response(response.content)
 
             score = 0.0
@@ -406,30 +407,8 @@ class ModelMetricService:
             )
 
         except Exception as exc:
-            raise RuntimeError("Dataset and code evaluation failed") from exc
-
-    def EvaluateAvailability(self, Model: Model) -> MetricResult:
-        try:
-            if isinstance(Model.repo_metadata, dict):
-                is_private = Model.repo_metadata.get("private", False)
-                if isinstance(is_private, str):
-                    is_private = is_private.lower() == "true"
-                availability = 0.0 if is_private else 1.0
-                details = {"is_private": is_private}
-            else:
-                availability = 0.0
-                details = {"error": "repo_metadata is not a dictionary"}
-
-            return MetricResult(
-                metric_type=MetricType.DATASET_AND_CODE_SCORE,
-                value=availability,
-                details=details,
-                latency_ms=0,
-            )
-
-        except Exception as e:
-            logging.error(f"Failed to evaluate availability: {e}")
-            raise RuntimeError("Availability evaluation failed") from e
+            raise RuntimeError("Dataset and code availability "
+                               "evaluation failed") from exc
 
     def EvaluateCodeQuality(self, Data: Model) -> MetricResult:
         def _check_test_files(repo_contents: list) -> bool:
@@ -482,30 +461,35 @@ class ModelMetricService:
             repo_text = "\n".join(repo_summary)
 
             prompt = (
-                "You are analyzing a code repository structure for quality. "
-                "Based on the file/directory listing below, evaluate "
-                "code quality indicators. "
-                "Return STRICT JSON with these boolean fields:\n"
+                "CRITICAL: You MUST respond with ONLY valid JSON. "
+                "No explanations, no markdown, no code blocks.\n\n"
+                "Task: Analyze this repository structure for code quality. "
+                "Return EXACTLY this JSON structure:\n\n"
                 "{\n"
                 '  "has_comprehensive_tests": true|false,\n'
                 '  "shows_good_structure": true|false,\n'
                 '  "has_documentation": true|false,\n'
-                '  "notes": "brief analysis"\n'
+                '  "notes": "analysis summary"\n'
                 "}\n\n"
-                "Definitions:\n"
-                "- has_comprehensive_tests: Tests appear to cover "
-                "multiple components/modules\n"
-                "- shows_good_structure: Clear separation of concerns, "
-                "organized directories\n"
-                "- has_documentation: README, docs, or inline "
-                "documentation present\n\n"
-                "=== REPOSITORY STRUCTURE ===\n"
-                f"{repo_text}\n"
-                "=== END STRUCTURE ===\n"
+                "Rules:\n"
+                "1. ONLY return JSON - nothing else\n"
+                "2. Use true/false (lowercase) for booleans\n"
+                "3. Keep notes under 30 characters\n\n"
+                "Evaluation criteria:\n"
+                "- has_comprehensive_tests: Are there test files covering "
+                "multiple components?\n"
+                "- shows_good_structure: Well-organized directories and "
+                "separation of concerns?\n"
+                "- has_documentation: README, docs, or documentation "
+                "files present?\n\n"
+                "Repository structure:\n"
+                f"{repo_text}\n\n"
+                "Remember: ONLY return the JSON object."
             )
 
             try:
-                response = self.llm_manager.call_gemini_api(prompt)
+                response = self.llm_manager.call_genai_api(prompt)
+                logging.info(f"LLM response content: {repr(response.content)}")
                 obj = json.loads(response.content)
                 return {
                     "has_comprehensive_tests": bool(
@@ -607,30 +591,31 @@ class ModelMetricService:
                 return ""
 
             return (
-                "You are evaluating machine learning dataset cards "
-                "for quality. "
-                "Based on the dataset information provided, evaluate quality "
-                "indicators. Return STRICT JSON with these boolean fields "
-                "and a notes string:\n"
+                "CRITICAL: You MUST respond with ONLY valid JSON. "
+                "No explanations, no markdown, no code blocks.\n\n"
+                "Task: Evaluate these dataset cards for quality indicators. "
+                "Return EXACTLY this JSON structure:\n\n"
                 "{\n"
                 '  "has_comprehensive_card": true|false,\n'
                 '  "has_clear_data_source": true|false,\n'
                 '  "has_preprocessing_info": true|false,\n'
-                '  "has_large_size": true|false,\n'
-                '  "notes": "brief analysis"\n'
+                '  "has_large_size": false|true,\n'
+                '  "notes": "analysis summary"\n'
                 "}\n\n"
-                "Definitions:\n"
-                "- has_comprehensive_card: Contains sections like "
-                "Description, Citation, Licensing, Usage\n"
-                "- has_clear_data_source: Mentions specific data sources "
-                "(Wikipedia, Common Crawl, etc.)\n"
-                "- has_preprocessing_info: Evidence of data preprocessing, "
-                "splits, quality controls, filtering\n"
-                "- has_large_size: Dataset size > 10k entries/samples "
-                "(look for numbers, size indicators)\n\n"
-                "=== DATASET INFORMATION ===\n"
-                f"{dataset_text}\n"
-                "=== END DATASET INFO ===\n"
+                "Rules:\n"
+                "1. ONLY return JSON - nothing else\n"
+                "2. Use true/false (lowercase) for booleans\n"
+                "3. Keep notes under 30 characters\n\n"
+                "Evaluation criteria:\n"
+                "- has_comprehensive_card: Complete dataset cards with "
+                "description, usage, citation?\n"
+                "- has_clear_data_source: Specific data sources mentioned?\n"
+                "- has_preprocessing_info: Evidence of data processing, "
+                "filtering, quality control?\n"
+                "- has_large_size: Dataset appears large (>10k samples)?\n\n"
+                "Dataset information:\n"
+                f"{dataset_text}\n\n"
+                "Remember: ONLY return the JSON object."
             )
 
         def _parse_dataset_llm_response(response: str) -> Dict[str, Any]:
@@ -682,7 +667,8 @@ class ModelMetricService:
                     latency_ms=0,
                 )
 
-            response = self.llm_manager.call_gemini_api(prompt)
+            response = self.llm_manager.call_genai_api(prompt)
+            logging.info(f"LLM response content: {repr(response.content)}")
             parsed = _parse_dataset_llm_response(response.content)
 
             score = 0.0
@@ -734,31 +720,23 @@ class ModelMetricService:
             assert isinstance(data, Model)
             text = _compose_source_text(data)
             return (
-                "You are evaluating a machine learning model card/README. "
-                "Only use the provided text. Return STRICT JSON with these "
-                "float fields and a short notes string:\n"
+                "OUTPUT FORMAT: JSON ONLY\n\n"
+                "Rate the README quality and return this JSON format:\n\n"
                 "{\n"
-                '  "quality_of_example_code": 0.3,\n'
-                '  "readme_coverage": 0.4,\n'
-                '  "notes": "brief rationale"\n'
+                '  "quality_of_example_code": (0.0 - 0.5),\n'
+                '  "readme_coverage": (0.0 - 0.5),\n'
+                '  "notes": "Good examples, clear docs"\n'
                 "}\n\n"
-                "Definitions:\n"
-                "- Quality of example code: How comprehensive and"
-                " well-documented are the examples provided in the README?"
-                " (0.0 = none, 0.5 = excellent). Return a single "
-                "float value.\n"
-                "- Readme coverage: How detailed and clear is the README?"
-                " (Contains headings like 'Usage', 'Training Data', "
-                "'Evaluation', etc.)"
-                " (0.0 = none, 0.5 = excellent). Return a single "
-                "float value.\n"
-                "=== BEGIN TEXT ===\n"
-                f"{text}\n"
-                "=== END TEXT ===\n"
+                "Scoring (0.0 to 0.5):\n"
+                "- quality_of_example_code: Rate code examples and "
+                "usage instructions\n"
+                "- readme_coverage: Rate documentation completeness "
+                "and structure\n\n"
+                f"ANALYZE THIS README:\n{text[:6000]}\n\n"
+                "RESPOND WITH JSON ONLY:"
             )
 
         def parse_llm_response(response: str) -> Dict[str, Any]:
-            logging.info(f"LLM Response received: {repr(response)}")
             if not response or not response.strip():
                 raise ValueError("Empty response from LLM")
             
@@ -791,9 +769,7 @@ class ModelMetricService:
 
         try:
             prompt = prepare_llm_prompt(Data)
-            logging.info(f"Calling LLM with prompt length: {len(prompt)}")
-            response = self.llm_manager.call_gemini_api(prompt)
-            logging.info(f"LLM response object: {response}")
+            response = self.llm_manager.call_genai_api(prompt)
             logging.info(f"LLM response content: {repr(response.content)}")
             parsed = parse_llm_response(response.content)
 
