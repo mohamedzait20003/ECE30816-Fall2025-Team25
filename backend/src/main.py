@@ -446,7 +446,9 @@ def run_batch_evaluation(input_file):
         
         # Output JSON to stdout
         import json
-        print(json.dumps(output, separators=(',', ':')))
+        json_output = json.dumps(output, separators=(',', ':'),
+                                 ensure_ascii=False)
+        print(json_output.strip())
 
 
 if __name__ == "__main__":
