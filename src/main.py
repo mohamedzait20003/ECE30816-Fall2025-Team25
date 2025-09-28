@@ -58,5 +58,5 @@ if __name__ == "__main__":
     evaluation = model_metric_service.EvaluateModel(model_data)
 
     json_output = json.dumps(evaluation, separators=(',', ':'),
-                                    ensure_ascii=False)
+                             ensure_ascii=False)
     print(json_output.strip())
