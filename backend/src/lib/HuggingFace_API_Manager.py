@@ -21,7 +21,7 @@ class HuggingFaceAPIManager:
             self.hf_api = HfApi(
                 endpoint="https://huggingface.co"
             )
-        
+
         self.hf_token = token
 
     @staticmethod

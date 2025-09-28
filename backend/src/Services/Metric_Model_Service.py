@@ -1,30 +1,233 @@
 import json
 import logging
+import concurrent.futures
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from Models import Model
-from lib.LLM_Manager import PurdueLLMManager
-from lib.Metric_Result import MetricResult, MetricType
-from Helpers import _parse_iso8601, _months_between
+from lib.LLM_Manager import LLMManager
+from Helpers import _parse_iso8601, _months_between, MetricResult, MetricType
 
 
 class ModelMetricService:
     def __init__(self) -> None:
-        self.llm_manager = PurdueLLMManager()
+        self.llm_manager = LLMManager()
 
-    def EvaluateModel(
-        self, model_description: str, dataset_description: str
-    ) -> MetricResult:
-        return MetricResult(
-            metric_type=MetricType.PERFORMANCE_CLAIMS,
-            value=0.0,
-            details={
-                "info": "Model evaluation not yet implemented"
-            },
-            latency_ms=0,
-            error=None
+    def EvaluateModel(self, Data: Model) -> Dict[str, Any]:
+        results = {}
+        evaluation_tasks = {
+            'ramp_up_time': self.EvaluateRampUpTime,
+            'bus_factor': self.EvaluateBusFactor,
+            'performance_claims': self.EvaluatePerformanceClaims,
+            'license': self.EvaluateLicense,
+            'size_score': self.EvaluateSize,
+            'dataset_and_code_score': (
+                self.EvaluateDatasetAndCodeAvailabilityScore
+            ),
+            'dataset_quality': self.EvaluateDatasetsQuality,
+            'code_quality': self.EvaluateCodeQuality
+        }
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_metric = {
+                executor.submit(func, Data): metric
+                for metric, func in evaluation_tasks.items()
+            }
+
+            for future in concurrent.futures.as_completed(future_to_metric):
+                metric_name = future_to_metric[future]
+                try:
+                    result = future.result()
+                    results[metric_name] = result
+                except Exception as e:
+                    logging.error(f"Failed to evaluate {metric_name}: {e}")
+                    results[metric_name] = MetricResult(
+                        metric_type=getattr(
+                            MetricType,
+                            metric_name.upper(),
+                            MetricType.PERFORMANCE_CLAIMS
+                        ),
+                        value=0.0,
+                        details={"error": str(e)},
+                        latency_ms=0
+                    )
+
+        default_result = MetricResult(
+            MetricType.PERFORMANCE_CLAIMS, 0.0, {}, 0
         )
+
+        net_score_result = self.Evaluate_Net(results)
+        model_name = getattr(Data, 'id', 'unknown-model')
+
+        return {
+            'name': model_name,
+            'category': 'MODEL',
+            'net_score': net_score_result.value,
+            'net_score_latency': net_score_result.latency_ms,
+            'ramp_up_time': results.get('ramp_up_time', default_result).value,
+            'ramp_up_time_latency': results.get(
+                'ramp_up_time', default_result).latency_ms,
+            'bus_factor': results.get('bus_factor', default_result).value,
+            'bus_factor_latency': results.get(
+                'bus_factor', default_result).latency_ms,
+            'performance_claims': results.get(
+                'performance_claims', default_result).value,
+            'performance_claims_latency': results.get(
+                'performance_claims', default_result).latency_ms,
+            'license': results.get('license', default_result).value,
+            'license_latency': results.get(
+                'license', default_result).latency_ms,
+            'size_score': results.get('size_score', default_result).value,
+            'size_score_latency': results.get(
+                'size_score', default_result).latency_ms,
+            'dataset_and_code_score': results.get(
+                'dataset_and_code_score', default_result).value,
+            'dataset_and_code_score_latency': results.get(
+                'dataset_and_code_score', default_result).latency_ms,
+            'dataset_quality': results.get(
+                'dataset_quality', default_result).value,
+            'dataset_quality_latency': results.get(
+                'dataset_quality', default_result).latency_ms,
+            'code_quality': results.get('code_quality', default_result).value,
+            'code_quality_latency': results.get(
+                'code_quality', default_result).latency_ms
+        }
+
+    def Evaluate_Net(self, metric_results: Dict[str, MetricResult]
+                     ) -> MetricResult:
+        def _prepare_prompt(results: Dict[str, MetricResult]) -> str:
+            metrics_summary = {}
+            for metric_name, result in results.items():
+                if isinstance(result, MetricResult):
+                    metrics_summary[metric_name] = {
+                        "score": round(result.value, 3),
+                        "details": result.details
+                    }
+
+            prompt = """<|begin_of_text|><|start_header_id|>system\
+                <|end_header_id|>
+
+                You are an expert model evaluator. Calculate weighted net \
+                score from metrics.
+                Return ONLY valid JSON.
+
+                <|eot_id|><|start_header_id|>user<|end_header_id|>
+
+                Calculate net score from metrics:
+
+                METRICS:
+                """ + json.dumps(metrics_summary, indent=2) + """
+
+                WEIGHTS: Performance Claims (25%), Code Quality (20%), \
+                Dataset Quality (15%), License (15%), Bus Factor (10%), \
+                Ramp Up Time (10%), Size Score (5%)
+
+                Return ONLY:
+                {
+                "net_score": 0.75,
+                "confidence": 0.85,
+                "reasoning": "Strong performance with good code quality"
+                }
+
+                <|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+            """
+            return prompt
+
+        def _parse_response(response: str) -> Dict[str, Any]:
+            try:
+                clean = response.strip()
+
+                if '<|begin_of_text|>' in clean:
+                    clean = clean.split('<|begin_of_text|>')[-1]
+                if '<|end_of_text|>' in clean:
+                    clean = clean.split('<|end_of_text|>')[0]
+                if 'assistant<|end_header_id|>' in clean:
+                    clean = clean.split('assistant<|end_header_id|>')[-1]
+                if '<|eot_id|>' in clean:
+                    clean = clean.split('<|eot_id|>')[0]
+
+                if clean.startswith("```json"):
+                    clean = clean[7:]
+                elif clean.startswith("```"):
+                    clean = clean[3:]
+                if clean.endswith("```"):
+                    clean = clean[:-3]
+
+                clean = clean.strip()
+                obj = json.loads(clean)
+
+                return {
+                    "net_score": max(0.0, min(1.0, float(
+                        obj.get("net_score", 0.0)))),
+                    "confidence": max(0.0, min(1.0, float(
+                        obj.get("confidence", 0.5)))),
+                    "reasoning": str(obj.get("reasoning", ""))[:300]
+                }
+
+            except Exception as e:
+                logging.warning(f"Parse error: {e}")
+                return {
+                    "net_score": 0.0,
+                    "confidence": 0.0,
+                    "reasoning": f"Parse failed: {str(e)[:100]}"
+                }
+
+        def _fallback_score(results: Dict[str, MetricResult]) -> float:
+            weights = {
+                'performance_claims': 0.25, 'code_quality': 0.20,
+                'dataset_quality': 0.15, 'license': 0.15,
+                'bus_factor': 0.10, 'ramp_up_time': 0.10,
+                'size_score': 0.05
+            }
+
+            weighted_sum = total_weight = 0.0
+            for name, weight in weights.items():
+                if name in results and isinstance(results[name], MetricResult):
+                    weighted_sum += results[name].value * weight
+                    total_weight += weight
+
+            return weighted_sum / total_weight if total_weight > 0 else 0.0
+
+        try:
+            start_time = time.time()
+            prompt = _prepare_prompt(metric_results)
+            response = self.llm_manager.call_genai_api(
+                prompt, model="llama3.1:latest")
+            parsed = _parse_response(response.content)
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
+            return MetricResult(
+                metric_type=MetricType.NET_SCORE,
+                value=parsed["net_score"],
+                details={
+                    "mode": "llm_weighted",
+                    "model_used": "llama3.1:latest",
+                    "llm_analysis": parsed,
+                    "fallback_used": False
+                },
+                latency_ms=latency_ms
+            )
+
+        except Exception as e:
+            logging.error(f"LLM net evaluation failed: {e}")
+            start_time = time.time()
+            fallback = _fallback_score(metric_results)
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
+            return MetricResult(
+                metric_type=MetricType.NET_SCORE,
+                value=fallback,
+                details={
+                    "mode": "fallback_weighted",
+                    "error": str(e)[:100],
+                    "fallback_used": True
+                },
+                latency_ms=latency_ms
+            )
 
     def EvaluatePerformanceClaims(self, Data: Model) -> MetricResult:
         def _compose_source_text(data: Model) -> str:
@@ -79,17 +282,16 @@ class ModelMetricService:
                         "has_baseline_or_sota_comparison": False,
                         "notes": "Empty response from LLM"
                     }
-                
-                # Strip markdown code block formatting if present
+
                 clean_response = response.strip()
                 if clean_response.startswith("```json"):
-                    clean_response = clean_response[7:]  # Remove ```json
+                    clean_response = clean_response[7:]
                 if clean_response.startswith("```"):
-                    clean_response = clean_response[3:]   # Remove ```
+                    clean_response = clean_response[3:]
                 if clean_response.endswith("```"):
-                    clean_response = clean_response[:-3]  # Remove trailing ```
+                    clean_response = clean_response[:-3]
                 clean_response = clean_response.strip()
-                
+
                 obj = json.loads(clean_response)
                 return {
                     "has_benchmark_datasets": bool(
@@ -114,10 +316,10 @@ class ModelMetricService:
                 }
 
         try:
+            start_time = time.time()
             prompt = prepare_llm_prompt(Data)
             response = self.llm_manager.call_genai_api(prompt)
-            logging.info(f"LLM response content: {repr(response.content)}")
-            
+
             response_text = ""
             if hasattr(response, 'content'):
                 response_text = response.content
@@ -125,7 +327,7 @@ class ModelMetricService:
                 response_text = response
             else:
                 response_text = str(response)
-                
+
             parsed = parse_llm_response(response_text)
 
             score = 0.0
@@ -138,13 +340,16 @@ class ModelMetricService:
             if score > 1.0:
                 score = 1.0
 
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
             details = {"mode": "llm", **parsed}
 
             return MetricResult(
                 metric_type=MetricType.PERFORMANCE_CLAIMS,
                 value=score,
                 details=details,
-                latency_ms=0,
+                latency_ms=latency_ms,
             )
 
         except Exception as exc:
@@ -200,6 +405,8 @@ class ModelMetricService:
             )
 
         try:
+            start_time = time.time()
+
             n_contrib = _contributors_count(Data)
             last_ts = _latest_commit_ts(Data)
 
@@ -217,6 +424,9 @@ class ModelMetricService:
                 months = round(
                     _months_between(datetime.now(timezone.utc), last_ts), 2)
 
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
             details = {
                 "contributors_count": n_contrib,
                 "contributors_score": round(c_score, 3),
@@ -229,7 +439,7 @@ class ModelMetricService:
                 metric_type=MetricType.BUS_FACTOR,
                 value=score,
                 details=details,
-                latency_ms=0,
+                latency_ms=latency_ms,
             )
 
         except Exception as e:
@@ -254,6 +464,8 @@ class ModelMetricService:
             return 0.0
 
         try:
+            start_time = time.time()
+
             if isinstance(Data.repo_metadata, dict):
                 s = (
                     Data.repo_metadata.get("size_mb")
@@ -303,19 +515,31 @@ class ModelMetricService:
 
                 sizeScore = (r_pi + j_nano + d_pc + aws) / 4.0
 
+                end_time = time.time()
+                latency_ms = int((end_time - start_time) * 1000)
+
                 return MetricResult(
                     metric_type=MetricType.SIZE_SCORE,
                     value=sizeScore,
-                    details={"derived_size_mb": size_mb},
-                    latency_ms=0,
+                    details={
+                        "derived_size_mb": size_mb,
+                        "raspberry_pi": r_pi,
+                        "jetson_nano": j_nano,
+                        "desktop_pc": d_pc,
+                        "aws_server": aws
+                    },
+                    latency_ms=latency_ms,
                 )
             else:
+                end_time = time.time()
+                latency_ms = int((end_time - start_time) * 1000)
+
                 logging.warning("Model repo_metadata is not a dictionary")
                 return MetricResult(
                     metric_type=MetricType.SIZE_SCORE,
                     value=0.0,
                     details={"error": "repo_metadata is not a dictionary"},
-                    latency_ms=0,
+                    latency_ms=latency_ms,
                 )
 
         except Exception as e:
@@ -345,26 +569,40 @@ class ModelMetricService:
         def prepare_llm_prompt(data: Model) -> str:
             assert isinstance(data, Model)
             text = _compose_source_text(data)
-            return (
-                "OUTPUT FORMAT: JSON ONLY\n\n"
-                "Check for dataset and code references. "
-                "Return this JSON format:\n\n"
-                "{\n"
-                '  "lists_training_datasets": true,\n'
-                '  "links_to_huggingface_datasets": false,\n'
-                '  "links_to_code_repo": true,\n'
-                '  "notes": "Found dataset names and GitHub links"\n'
-                "}\n\n"
-                "Criteria:\n"
-                "- lists_training_datasets: true if mentions specific "
-                "dataset names\n"
-                "- links_to_huggingface_datasets: true if has "
-                "huggingface.co/datasets/ URLs\n"
-                "- links_to_code_repo: true if has GitHub/GitLab "
-                "repository links\n\n"
-                f"ANALYZE THIS TEXT:\n{text[:6000]}\n\n"
-                "RESPOND WITH JSON ONLY:"
-            )
+            header = (
+                "<|begin_of_text|><|start_header_id|>"
+                "system<|end_header_id|>")
+
+            return f"""{header}
+
+                You are a model documentation analyzer. Check for dataset \
+                and code references.
+                Return ONLY valid JSON.
+
+                <|eot_id|><|start_header_id|>user<|end_header_id|>
+
+                Analyze this model documentation for dataset and code \
+                availability:
+
+                {text[:6000]}
+
+                Check for:
+                - lists_training_datasets: mentions specific dataset names
+                - links_to_huggingface_datasets: has \
+                huggingface.co/datasets/ URLs
+                - links_to_code_repo: has GitHub/GitLab repository links
+
+                Return ONLY:
+                {{
+                "lists_training_datasets": true,
+                "links_to_huggingface_datasets": false,
+                "links_to_code_repo": true,
+                "notes": "Found dataset names and GitHub links"
+                }}
+
+                <|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+            """
 
         def parse_llm_response(response: str) -> Dict[str, Any]:
             obj = json.loads(response)
@@ -382,6 +620,7 @@ class ModelMetricService:
             }
 
         try:
+            start_time = time.time()
             prompt = prepare_llm_prompt(Data)
             response = self.llm_manager.call_genai_api(prompt)
             logging.info(f"LLM response content: {repr(response.content)}")
@@ -397,13 +636,16 @@ class ModelMetricService:
             if score > 1.0:
                 score = 1.0
 
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
             details = {"mode": "llm", **parsed}
 
             return MetricResult(
                 metric_type=MetricType.DATASET_AND_CODE_SCORE,
                 value=score,
                 details=details,
-                latency_ms=0,
+                latency_ms=latency_ms,
             )
 
         except Exception as exc:
@@ -512,14 +754,17 @@ class ModelMetricService:
                 }
 
         try:
+            start_time = time.time()
             repo_contents = getattr(Data, "repo_contents", [])
 
             if not isinstance(repo_contents, list):
+                end_time = time.time()
+                latency_ms = int((end_time - start_time) * 1000)
                 return MetricResult(
                     metric_type=MetricType.CODE_QUALITY,
                     value=0.0,
                     details={"error": "No repository contents available"},
-                    latency_ms=0,
+                    latency_ms=latency_ms,
                 )
 
             has_tests = _check_test_files(repo_contents)
@@ -539,6 +784,9 @@ class ModelMetricService:
             if score > 1.0:
                 score = 1.0
 
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
             details = {
                 "has_tests": has_tests,
                 "has_dependency_management": has_dependency_mgmt,
@@ -550,7 +798,7 @@ class ModelMetricService:
                 metric_type=MetricType.CODE_QUALITY,
                 value=score,
                 details=details,
-                latency_ms=0,
+                latency_ms=latency_ms,
             )
 
         except Exception as e:
@@ -646,25 +894,30 @@ class ModelMetricService:
                 }
 
         try:
+            start_time = time.time()
             dataset_cards = getattr(Data, "dataset_cards", {})
             dataset_infos = getattr(Data, "dataset_infos", {})
 
             if not dataset_cards and not dataset_infos:
+                end_time = time.time()
+                latency_ms = int((end_time - start_time) * 1000)
                 return MetricResult(
                     metric_type=MetricType.DATASET_QUALITY,
                     value=0.0,
                     details={"error": "No dataset information available"},
-                    latency_ms=0,
+                    latency_ms=latency_ms,
                 )
 
             prompt = _prepare_dataset_llm_prompt(Data)
 
             if not prompt:
+                end_time = time.time()
+                latency_ms = int((end_time - start_time) * 1000)
                 return MetricResult(
                     metric_type=MetricType.DATASET_QUALITY,
                     value=0.0,
                     details={"error": "No dataset content to analyze"},
-                    latency_ms=0,
+                    latency_ms=latency_ms,
                 )
 
             response = self.llm_manager.call_genai_api(prompt)
@@ -684,6 +937,9 @@ class ModelMetricService:
             if score > 1.0:
                 score = 1.0
 
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
             details = {
                 "mode": "llm",
                 "dataset_count": len(dataset_cards),
@@ -694,7 +950,7 @@ class ModelMetricService:
                 metric_type=MetricType.DATASET_QUALITY,
                 value=score,
                 details=details,
-                latency_ms=0,
+                latency_ms=latency_ms,
             )
 
         except Exception as e:
@@ -719,48 +975,56 @@ class ModelMetricService:
         def prepare_llm_prompt(data: Model) -> str:
             assert isinstance(data, Model)
             text = _compose_source_text(data)
-            return (
-                "OUTPUT FORMAT: JSON ONLY\n\n"
-                "Rate the README quality and return this JSON format:\n\n"
-                "{\n"
-                '  "quality_of_example_code": (0.0 - 0.5),\n'
-                '  "readme_coverage": (0.0 - 0.5),\n'
-                '  "notes": "Good examples, clear docs"\n'
-                "}\n\n"
-                "Scoring (0.0 to 0.5):\n"
-                "- quality_of_example_code: Rate code examples and "
-                "usage instructions\n"
-                "- readme_coverage: Rate documentation completeness "
-                "and structure\n\n"
-                f"ANALYZE THIS README:\n{text[:6000]}\n\n"
-                "RESPOND WITH JSON ONLY:"
-            )
+            header = ("<|begin_of_text|><|start_header_id|>"
+                      "system<|end_header_id|>")
+            return f"""{header}
+
+You are a README quality evaluator. Rate documentation quality.
+Return ONLY valid JSON.
+
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Rate this README for ramp-up time (0.0-0.5 each):
+
+{text[:6000]}
+
+Rate:
+- quality_of_example_code: Code examples and usage instructions
+- readme_coverage: Documentation completeness and structure
+
+Return ONLY:
+{{
+  "quality_of_example_code": 0.4,
+  "readme_coverage": 0.3,
+  "notes": "Good examples, clear docs"
+}}
+
+<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+"""
 
         def parse_llm_response(response: str) -> Dict[str, Any]:
             if not response or not response.strip():
                 raise ValueError("Empty response from LLM")
-            
-            # Remove markdown code block markers if present
+
             response = response.strip()
             if response.startswith("```json"):
-                response = response[7:]  # Remove ```json
+                response = response[7:]
             if response.startswith("```"):
-                response = response[3:]   # Remove ```
+                response = response[3:]
             if response.endswith("```"):
-                response = response[:-3]  # Remove trailing ```
+                response = response[:-3]
             response = response.strip()
-            
-            obj = json.loads(response)  # let it raise if bad JSON
-            
-            # Handle array values - take the first value if it's an array
+
+            obj = json.loads(response)
             quality_val = obj.get("quality_of_example_code", 0.0)
             if isinstance(quality_val, list) and quality_val:
                 quality_val = quality_val[0]
-            
+
             readme_val = obj.get("readme_coverage", 0.0)
             if isinstance(readme_val, list) and readme_val:
                 readme_val = readme_val[0]
-            
+
             return {
                 "quality_of_example_code": float(quality_val),
                 "readme_coverage": float(readme_val),
@@ -768,6 +1032,7 @@ class ModelMetricService:
             }
 
         try:
+            start_time = time.time()
             prompt = prepare_llm_prompt(Data)
             response = self.llm_manager.call_genai_api(prompt)
             logging.info(f"LLM response content: {repr(response.content)}")
@@ -777,13 +1042,16 @@ class ModelMetricService:
             score += parsed["quality_of_example_code"]
             score += parsed["readme_coverage"]
 
+            end_time = time.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
             details = {"mode": "llm", **parsed}
 
             return MetricResult(
                 metric_type=MetricType.RAMP_UP_TIME,
                 value=score,
                 details=details,
-                latency_ms=0,
+                latency_ms=latency_ms,
             )
 
         except Exception as exc:
@@ -793,33 +1061,30 @@ class ModelMetricService:
         def _get_license_info(data: Model) -> str:
             """Extract license information from all available sources"""
             license_info = []
-            
-            # Check model card for license information
+
             card_obj = getattr(data, "card", None)
             if card_obj and isinstance(card_obj, dict):
-                # Common license fields in HuggingFace model cards
+
                 license_fields = ["license", "license_name", "license_link",
                                   "license_url"]
                 for field in license_fields:
                     if field in card_obj and card_obj[field]:
                         license_info.append(f"{field}: {card_obj[field]}")
-                
-                # Check description for license mentions
+
                 description = card_obj.get("description", "")
                 license_words = [
                     "license", "mit", "apache", "bsd", "gpl", "lgpl"
                 ]
+
                 if description and any(word in description.lower()
                                        for word in license_words):
                     license_info.append(f"description: {description}")
-            
-            # Check repository metadata for license
+
             repo_metadata = getattr(data, "repo_metadata", {})
             if isinstance(repo_metadata, dict):
                 repo_license = repo_metadata.get("license")
                 if repo_license:
                     if isinstance(repo_license, dict):
-                        # GitHub API license object
                         license_name = repo_license.get("name", "")
                         license_key = repo_license.get("key", "")
                         if license_name or license_key:
@@ -827,19 +1092,15 @@ class ModelMetricService:
                                 f"repo_license: {license_name} "
                                 f"({license_key})")
                     else:
-                        # Simple license string
                         license_info.append(f"repo_license: {repo_license}")
-            
+
             return "\n".join(license_info) if license_info else ""
 
         def _classify_license(license_text: str) -> tuple:
-            """Classify license and return (score, type, reason)"""
             if not license_text:
-                return 0.0, "rule_based", "No license information found"
-            
+                return 0.0,
+
             license_lower = license_text.lower()
-            
-            # PERMISSIVE LICENSES -> 1.0 (EXACTLY 1.0!)
             permissive_licenses = {
                 "mit": "MIT License",
                 "bsd": "BSD License",
@@ -855,13 +1116,12 @@ class ModelMetricService:
                 "isc": "ISC License",
                 "unlicense": "Unlicense"
             }
-            
+
             for license_key, license_name in permissive_licenses.items():
                 if license_key in license_lower:
                     return (1.0, "rule_based",
                             f"Permissive license: {license_name}")
-            
-            # RESTRICTIVE/INCOMPATIBLE LICENSES -> 0.0 (EXACTLY 0.0!)
+
             restrictive_licenses = {
                 "gpl-2.0": "GPL v2.0",
                 "gpl v2.0": "GPL v2.0",
@@ -873,19 +1133,17 @@ class ModelMetricService:
                 "proprietary": "Proprietary License",
                 "all rights reserved": "All Rights Reserved"
             }
-            
+
             for license_key, license_name in restrictive_licenses.items():
                 if license_key in license_lower:
                     return (0.0, "rule_based",
                             f"Restrictive license: {license_name}")
-            
-            # If contains license keywords but unclassified -> use LLM
+
             license_keywords = ["license", "copyright", "terms", "conditions"]
             if any(keyword in license_lower for keyword in license_keywords):
                 return (None, "llm_needed",
                         "Custom license requires LLM analysis")
-            
-            # No clear license information -> 0.0
+
             return 0.0, "rule_based", "Unclear or missing license information"
 
         def _prepare_llm_prompt(license_text: str) -> str:
@@ -935,58 +1193,58 @@ class ModelMetricService:
                 }
 
         try:
-            # Extract license information from all sources
+            start_time = time.time()
             license_text = _get_license_info(Data)
-            
-            # Attempt rule-based classification first
+
             score, classification_type, reason = _classify_license(
                 license_text)
-            
+
             if score is not None:
-                # Successfully classified with rules
+                end_time = time.time()
+                latency_ms = int((end_time - start_time) * 1000)
                 details = {
                     "classification_method": classification_type,
                     "license_text": license_text[:500] if license_text else "",
                     "reason": reason,
                 }
-                
+
                 return MetricResult(
                     metric_type=MetricType.LICENSE,
                     value=score,
                     details=details,
-                    latency_ms=0,
+                    latency_ms=latency_ms,
                 )
-            
+
             else:
-                # Need LLM analysis for custom license
                 if not license_text:
+                    end_time = time.time()
+                    latency_ms = int((end_time - start_time) * 1000)
                     return MetricResult(
                         metric_type=MetricType.LICENSE,
                         value=0.0,
                         details={"error": "No license information available"},
-                        latency_ms=0,
+                        latency_ms=latency_ms,
                     )
-                
+
                 prompt = _prepare_llm_prompt(license_text)
                 response = self.llm_manager.call_genai_api(prompt)
-                logging.info(f"LLM license analysis: {response.content}")
-                
                 parsed = _parse_llm_response(response.content)
-                
-                # Ensure score is within valid range [0.0, 1.0]
                 llm_score = max(0.0, min(1.0, parsed["permissiveness_score"]))
-                
+
+                end_time = time.time()
+                latency_ms = int((end_time - start_time) * 1000)
+
                 details = {
                     "classification_method": "llm_analysis",
                     "license_text": license_text[:500],
                     "llm_analysis": parsed,
                 }
-                
+
                 return MetricResult(
                     metric_type=MetricType.LICENSE,
                     value=llm_score,
                     details=details,
-                    latency_ms=0,
+                    latency_ms=latency_ms,
                 )
 
         except Exception as e:
