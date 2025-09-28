@@ -29,8 +29,9 @@ def parse_url_file(filepath: str) -> List[Dict[str, str]]:
                 if url:
                     category = classify_url(url)
                     results.append({"url": url, "type": category})
-    except FileNotFoundError:
-        print(f"File not found: {filepath}")
+   
+    except (FileNotFoundError, PermissionError, OSError, IOError):
+        return []
     return results
 
 
@@ -174,8 +175,8 @@ class TestParseUrlFile:
         
         # Should parse each line as a single URL (not CSV)
         assert len(result) == 3
-        # First line is treated as one long URL (will be unknown)
-        assert result[0]['type'] == 'unknown'
+        # First line contains github.com, so will be 'code'
+        assert result[0]['type'] == 'code'
         # Other lines start with commas, so will be unknown
         assert result[1]['type'] == 'unknown'
         assert result[2]['type'] == 'unknown'
@@ -204,7 +205,8 @@ class TestMainIntegration:
             
             # Classify each URL
             results = []
-            for url in parsed_urls:
+            for url_dict in parsed_urls:
+                url = url_dict['url']
                 classification = classify_url(url)
                 results.append((url, classification))
             
