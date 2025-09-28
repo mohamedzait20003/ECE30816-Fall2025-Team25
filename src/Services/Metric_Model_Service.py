@@ -13,10 +13,9 @@ from Helpers import _parse_iso8601, _months_between, MetricResult, MetricType
 class ModelMetricService:
     def __init__(self) -> None:
         self.llm_manager = LLMManager()
-    
+
     def _extract_size_scores(self,
                              size_result: MetricResult) -> Dict[str, float]:
-        """Extract device-specific size scores from MetricResult details."""
         if (hasattr(size_result, 'details') and
                 isinstance(size_result.details, dict)):
             details = size_result.details
@@ -79,7 +78,11 @@ class ModelMetricService:
         )
 
         net_score_result = self.Evaluate_Net(results)
-        model_name = getattr(Data, 'id', 'unknown-model')
+        raw_model_id = getattr(Data, 'id', 'unknown-model')
+
+        model_name = raw_model_id
+        if '/' in raw_model_id:
+            model_name = raw_model_id.split('/')[-1]
 
         return {
             'name': model_name,
@@ -146,14 +149,13 @@ class ModelMetricService:
                     contribution = metric_value * weight
                     weighted_sum += contribution
                     total_weight += weight
-                    
+
                     metric_breakdown[metric_name] = {
                         "value": round(metric_value, 3),
                         "weight": weight,
                         "contribution": round(contribution, 3)
                     }
                 else:
-                    # Missing metric gets 0 score but still counts for weight
                     metric_breakdown[metric_name] = {
                         "value": 0.0,
                         "weight": weight,
