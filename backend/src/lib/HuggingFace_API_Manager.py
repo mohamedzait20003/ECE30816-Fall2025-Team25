@@ -9,15 +9,19 @@ class HuggingFaceAPIManager:
     def __init__(self):
         token = os.getenv("HF_TOKEN")
 
-        if token is None:
-            raise ValueError(
-                "Hugging Face token not found in environment variables."
+        # Token is optional for public repositories
+        if token:
+            logging.info("Using HuggingFace token for authenticated access")
+            self.hf_api = HfApi(
+                endpoint="https://huggingface.co",
+                token=token
             )
-
-        self.hf_api = HfApi(
-            endpoint="https://huggingface.co",
-            token=token
-        )
+        else:
+            logging.warning("Using anonymous access to HuggingFace ")
+            self.hf_api = HfApi(
+                endpoint="https://huggingface.co"
+            )
+        
         self.hf_token = token
 
     @staticmethod
