@@ -12,8 +12,8 @@ from lib.Metric_Result import MetricResult
 # Load environment variables from .env file
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-# Configure logging to see debug info
-logging.basicConfig(level=logging.INFO)
+# Configure logging to hide all debug info
+logging.basicConfig(level=logging.CRITICAL)
 
 
 def time_evaluation(eval_func: Callable, *args, **kwargs) -> \
@@ -69,15 +69,15 @@ def run_evaluations_sequential(model_data) -> \
         ("License", service.EvaluateLicense)
     ]
     
-    print("Running evaluations sequentially...")
-    print("-" * 50)
+    logging.info("Running evaluations sequentially...")
+    logging.info("-" * 50)
     
     for name, eval_func in evaluations:
-        print(f"Starting: {name}")
+        logging.info(f"Starting: {name}")
         result, exec_time = time_evaluation(eval_func, model_data)
         results[name] = (result, exec_time)
-        print(f"Completed: {name} - Score: {result.value:.3f} - "
-              f"Time: {exec_time:.3f}s")
+        logging.info(f"Completed: {name} - Score: {result.value:.3f} - "
+                     f"Time: {exec_time:.3f}s")
     
     return results
 
@@ -109,8 +109,9 @@ def run_evaluations_parallel(model_data, max_workers: int = 4) -> \
         ("License", service.EvaluateLicense)
     ]
     
-    print(f"Running evaluations in parallel (max_workers={max_workers})...")
-    print("-" * 50)
+    logging.info(f"Running evaluations in parallel "
+                 f"(max_workers={max_workers})...")
+    logging.info("-" * 50)
     
     # Submit all tasks to the thread pool
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -119,7 +120,7 @@ def run_evaluations_parallel(model_data, max_workers: int = 4) -> \
         for name, eval_func in evaluations:
             future = executor.submit(time_evaluation, eval_func, model_data)
             future_to_name[future] = name
-            print(f"Submitted: {name}")
+            logging.info(f"Submitted: {name}")
         
         # Collect results as they complete
         for future in as_completed(future_to_name):
@@ -127,10 +128,11 @@ def run_evaluations_parallel(model_data, max_workers: int = 4) -> \
             try:
                 result, exec_time = future.result()
                 results[name] = (result, exec_time)
-                print(f"Completed: {name} - Score: {result.value:.3f} - "
-                      f"Time: {exec_time:.3f}s")
+                logging.info(f"Completed: {name} - "
+                             f"Score: {result.value:.3f} - "
+                             f"Time: {exec_time:.3f}s")
             except Exception as e:
-                print(f"Failed: {name} - Error: {e}")
+                logging.error(f"Failed: {name} - Error: {e}")
                 # You might want to store the error in results or handle
                 # it differently
                 
@@ -146,25 +148,25 @@ def print_timing_summary(results: Dict[str, Tuple[MetricResult, float]],
         results: Dictionary mapping evaluation names to (result, time) tuples
         total_time: Total execution time for all evaluations
     """
-    print("\n" + "=" * 60)
-    print("EVALUATION SUMMARY")
-    print("=" * 60)
+    logging.info("\n" + "=" * 60)
+    logging.info("EVALUATION SUMMARY")
+    logging.info("=" * 60)
     
     total_eval_time = 0.0
     for name, (result, exec_time) in results.items():
-        print(f"{name:<20}: Score = {result.value:.3f}, "
-              f"Time = {exec_time:.3f}s")
+        logging.info(f"{name:<20}: Score = {result.value:.3f}, "
+                     f"Time = {exec_time:.3f}s")
         total_eval_time += exec_time
     
-    print("-" * 60)
-    print(f"{'Total Eval Time':<20}: {total_eval_time:.3f}s")
-    print(f"{'Wall Clock Time':<20}: {total_time:.3f}s")
+    logging.info("-" * 60)
+    logging.info(f"{'Total Eval Time':<20}: {total_eval_time:.3f}s")
+    logging.info(f"{'Wall Clock Time':<20}: {total_time:.3f}s")
     
     if total_time > 0:
         efficiency = (total_eval_time / total_time) * 100
-        print(f"{'Parallelism Efficiency':<20}: {efficiency:.1f}%")
+        logging.info(f"{'Parallelism Efficiency':<20}: {efficiency:.1f}%")
     
-    print("=" * 60)
+    logging.info("=" * 60)
 
 
 def parse_input(file_path):
@@ -201,8 +203,8 @@ def parse_input(file_path):
 
 def find_missing_links(model_link, dataset_link, code_link):
     """
-    If dataset_link or code_link is missing, try to find them from the model card.
-    Uses HuggingFace API to get model info and parse for links.
+    If dataset_link or code_link is missing, try to find them from the
+    model card. Uses HuggingFace API to get model info and parse for links.
     """
     from lib.HuggingFace_API_Manager import HuggingFaceAPIManager
     import re
@@ -216,7 +218,7 @@ def find_missing_links(model_link, dataset_link, code_link):
         
         # Extract model ID from the link
         model_id = hf_manager.model_link_to_id(model_link)
-        print(f"  Searching for links in model: {model_id}")
+        logging.info(f"  Searching for links in model: {model_id}")
         
         # Get model information
         model_info = hf_manager.get_model_info(model_id)
@@ -283,8 +285,9 @@ def find_missing_links(model_link, dataset_link, code_link):
                 org, model_name = model_id_parts
                 # Try common GitHub URL patterns
                 # Remove size/version suffixes (e.g., -medium, -large, -32B)
-                base_name = re.sub(r'-(?:small|medium|large|xl|xxl|\d+[BMG]?)$',
-                                   '', model_name, flags=re.IGNORECASE)
+                pattern = r'-(?:small|medium|large|xl|xxl|\d+[BMG]?)$'
+                base_name = re.sub(pattern, '', model_name,
+                                   flags=re.IGNORECASE)
                 
                 potential_repos = [
                     f"https://github.com/{org}/{base_name}",
@@ -296,7 +299,7 @@ def find_missing_links(model_link, dataset_link, code_link):
                 discovered_code = potential_repos[0]
         
     except Exception as e:
-        print(f"  Warning: Could not fetch model info for {model_link}: {e}")
+        logging.warning(f"Could not fetch model info for {model_link}: {e}")
     
     # Use provided links first, fall back to discovered links
     final_dataset_links = []
@@ -312,52 +315,138 @@ def find_missing_links(model_link, dataset_link, code_link):
     if discovered_datasets:
         dataset_preview = ', '.join(discovered_datasets[:3])
         more_text = '...' if len(discovered_datasets) > 3 else ''
-        print(f"  Found {len(discovered_datasets)} dataset link(s): "
-              f"{dataset_preview}{more_text}")
+        logging.info(f"  Found {len(discovered_datasets)} dataset link(s): "
+                     f"{dataset_preview}{more_text}")
     if discovered_code:
-        print(f"  Found code repository: {discovered_code}")
+        logging.info(f"  Found code repository: {discovered_code}")
     
     return final_dataset_links, final_code_link
+
+
+def extract_model_name(model_link):
+    """Extract model name from HuggingFace model link."""
+    import re
+    match = re.search(r'huggingface\.co/([^/]+/[^/?]+)', model_link)
+    if match:
+        return match.group(1).split('/')[-1]
+    return "unknown_model"
+
+
+def format_size_score(size_result):
+    """Convert size score to platform-specific format."""
+    # For now, create a simple mapping based on the size score
+    # This might need adjustment based on actual size evaluation logic
+    base_score = size_result.value
+    return {
+        "raspberry_pi": round(min(base_score * 0.2, 1.0), 2),
+        "jetson_nano": round(min(base_score * 0.4, 1.0), 2),
+        "desktop_pc": round(min(base_score * 0.8, 1.0), 2),
+        "aws_server": round(base_score, 2)
+    }
 
 
 def run_batch_evaluation(input_file):
     jobs = parse_input(input_file)
     for i, job in enumerate(jobs, 1):
-        print(f"\n=== Evaluating Model {i}/{len(jobs)} ===")
         model_link = job['model_link']
-        print(f"Model: {model_link}")
         
         dataset_links, code_link = find_missing_links(
             model_link, job.get('dataset_link'), job.get('code_link'))
         
-        # Debug: Show what links we're using
-        print(f"  Dataset links: {dataset_links}")
-        print(f"  Code link: {code_link}")
-        
         fetcher = Controller()
-        print("Fetching model data...")
         model_data = fetcher.fetch(
             model_link,
             dataset_links=dataset_links if dataset_links else [],
             code_link=code_link
         )
-        print("Model data fetched successfully!")
-        
-        # Debug: Show what data we actually got
-        repo_keys = (list(getattr(model_data, 'repo_metadata', {}).keys())
-                     if hasattr(model_data, 'repo_metadata') else 'None')
-        print(f"  Repo metadata keys: {repo_keys}")
-        print(f"  Contributors count: "
-              f"{len(getattr(model_data, 'repo_contributors', []))}")
-        print(f"  Commits count: "
-              f"{len(getattr(model_data, 'repo_commit_history', []))}")
-        print(f"  Dataset IDs: {getattr(model_data, 'dataset_ids', [])}")
         
         start_time = time.perf_counter()
         results = run_evaluations_parallel(model_data, max_workers=4)
         end_time = time.perf_counter()
         total_time = end_time - start_time
-        print_timing_summary(results, total_time)
+        
+        # Extract model name
+        model_name = extract_model_name(model_link)
+        
+        # Store metric scores for net score calculation
+        metric_scores = {}
+        
+        # Add each metric with proper naming and latency
+        metric_mapping = {
+            "Ramp-Up Time": ("ramp_up_time", "ramp_up_time_latency"),
+            "Bus Factor": ("bus_factor", "bus_factor_latency"),
+            "Performance Claims": ("performance_claims",
+                                   "performance_claims_latency"),
+            "License": ("license", "license_latency"),
+            "Size": ("size_score", "size_score_latency"),
+            "Availability": ("dataset_and_code_score",
+                             "dataset_and_code_score_latency"),
+            "Dataset Quality": ("dataset_quality", "dataset_quality_latency"),
+            "Code Quality": ("code_quality", "code_quality_latency")
+        }
+        
+        # Collect all metric data first
+        metric_data = {}
+        for metric_name, (result, exec_time) in results.items():
+            if metric_name in metric_mapping:
+                if metric_name == "Size":
+                    # Special handling for size score
+                    size_scores = format_size_score(result)
+                    metric_data[metric_name] = (size_scores, exec_time)
+                    # Calculate mean of all platform scores for net score
+                    size_mean = sum(size_scores.values()) / len(size_scores)
+                    metric_scores["Size"] = size_mean
+                else:
+                    score_value = round(result.value, 2)
+                    metric_data[metric_name] = (score_value, exec_time)
+                    metric_scores[metric_name] = score_value
+        
+        # Calculate net score using the specified weights
+        # NetScore = 0.20RampUp + 0.15BusFactor + 0.15PerfClaim + 0.15License +
+        #           0.10Size + 0.10CodeDatasetAvailability + 0.10DatasetQual +
+        #           0.05CodeQual
+        weights = {
+            "Ramp-Up Time": 0.20,
+            "Bus Factor": 0.15,
+            "Performance Claims": 0.15,
+            "License": 0.15,
+            "Size": 0.10,
+            "Availability": 0.10,
+            "Dataset Quality": 0.10,
+            "Code Quality": 0.05
+        }
+        
+        net_score = 0.0
+        for metric_name, weight in weights.items():
+            if metric_name in metric_scores:
+                net_score += weights[metric_name] * metric_scores[metric_name]
+        
+        # Build output JSON in the exact order as sample_output.txt
+        from collections import OrderedDict
+        output = OrderedDict([
+            ("name", model_name),
+            ("category", "MODEL"),
+            ("net_score", round(net_score, 2)),
+            ("net_score_latency", int(total_time * 1000)),
+        ])
+        
+        # Add metrics in the exact order from sample output
+        ordered_metrics = [
+            "Ramp-Up Time", "Bus Factor", "Performance Claims", "License",
+            "Size", "Availability", "Dataset Quality", "Code Quality"
+        ]
+        
+        for metric_name in ordered_metrics:
+            if metric_name in metric_data:
+                score_key, latency_key = metric_mapping[metric_name]
+                score_value, exec_time = metric_data[metric_name]
+                
+                output[score_key] = score_value
+                output[latency_key] = int(exec_time * 1000)
+        
+        # Output JSON to stdout
+        import json
+        print(json.dumps(output, separators=(',', ':')))
 
 
 if __name__ == "__main__":
@@ -366,4 +455,4 @@ if __name__ == "__main__":
         run_batch_evaluation(sys.argv[1])
     else:
         # error: please provide a .txt file with model links
-        print("Usage: python main.py sample_input.txt")
+        logging.error("Usage: python main.py sample_input.txt")
