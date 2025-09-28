@@ -1,0 +1,5 @@
+https://huggingface.co/xlangai/OpenCUA-32B
+https://github.com/xlang-ai/OpenCUA
+https://huggingface.co/datasets/xlangai/AgentNet
+https://huggingface.co/datasets/osunlp/UGround-V1-Data
+https://huggingface.co/datasets/xlangai/aguvis-stage2
