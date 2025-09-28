@@ -109,6 +109,9 @@ if __name__ == "__main__":
     dataset_links = urls["datasets"] if urls["datasets"] else []
     code_link = urls["code"][0] if urls["code"] else None
 
+    # Collect all model evaluations
+    all_evaluations = []
+    
     for model_link in urls["models"]:
         try:
             model_data = fetcher.fetch(
@@ -118,11 +121,14 @@ if __name__ == "__main__":
             )
 
             evaluation = model_metric_service.EvaluateModel(model_data)
-            json_output = json.dumps(evaluation, separators=(',', ':'),
-                                     ensure_ascii=False)
-
-            print(json_output.strip())
+            all_evaluations.append(evaluation)
 
         except Exception as e:
             print(f"Error evaluating model {model_link}: {e}", file=sys.stderr)
             continue
+    
+    # Print all results once
+    for evaluation in all_evaluations:
+        json_output = json.dumps(evaluation, separators=(',', ':'),
+                                 ensure_ascii=False)
+        print(json_output.strip())

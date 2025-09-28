@@ -14,6 +14,26 @@ class ModelMetricService:
     def __init__(self) -> None:
         self.llm_manager = LLMManager()
 
+    def _extract_size_scores(self,
+                             size_result: MetricResult) -> Dict[str, float]:
+        if (hasattr(size_result, 'details') and
+                isinstance(size_result.details, dict)):
+            details = size_result.details
+            return {
+                "raspberry_pi": round(details.get("raspberry_pi", 0.0), 2),
+                "jetson_nano": round(details.get("jetson_nano", 0.0), 2),
+                "desktop_pc": round(details.get("desktop_pc", 0.0), 2),
+                "aws_server": round(details.get("aws_server", 0.0), 2)
+            }
+        else:
+            # Fallback if details are not available
+            return {
+                "raspberry_pi": 0.0,
+                "jetson_nano": 0.0,
+                "desktop_pc": 0.0,
+                "aws_server": 0.0
+            }
+
     def EvaluateModel(self, Data: Model) -> Dict[str, Any]:
         results = {}
         evaluation_tasks = {
@@ -58,171 +78,139 @@ class ModelMetricService:
         )
 
         net_score_result = self.Evaluate_Net(results)
-        model_name = getattr(Data, 'id', 'unknown-model')
+        raw_model_id = getattr(Data, 'id', 'unknown-model')
+
+        model_name = raw_model_id
+        if '/' in raw_model_id:
+            model_name = raw_model_id.split('/')[-1]
 
         return {
             'name': model_name,
             'category': 'MODEL',
-            'net_score': net_score_result.value,
+            'net_score': round(net_score_result.value, 2),
             'net_score_latency': net_score_result.latency_ms,
-            'ramp_up_time': results.get('ramp_up_time', default_result).value,
+            'ramp_up_time': round(
+                results.get('ramp_up_time', default_result).value, 2),
             'ramp_up_time_latency': results.get(
                 'ramp_up_time', default_result).latency_ms,
-            'bus_factor': results.get('bus_factor', default_result).value,
+            'bus_factor': round(
+                results.get('bus_factor', default_result).value, 2),
             'bus_factor_latency': results.get(
                 'bus_factor', default_result).latency_ms,
-            'performance_claims': results.get(
-                'performance_claims', default_result).value,
+            'performance_claims': round(results.get(
+                'performance_claims', default_result).value, 2),
             'performance_claims_latency': results.get(
                 'performance_claims', default_result).latency_ms,
-            'license': results.get('license', default_result).value,
+            'license': round(results.get('license', default_result).value, 2),
             'license_latency': results.get(
                 'license', default_result).latency_ms,
-            'size_score': results.get('size_score', default_result).value,
+            'size_score': self._extract_size_scores(
+                results.get('size_score', default_result)),
             'size_score_latency': results.get(
                 'size_score', default_result).latency_ms,
-            'dataset_and_code_score': results.get(
-                'dataset_and_code_score', default_result).value,
+            'dataset_and_code_score': round(results.get(
+                'dataset_and_code_score', default_result).value, 2),
             'dataset_and_code_score_latency': results.get(
                 'dataset_and_code_score', default_result).latency_ms,
-            'dataset_quality': results.get(
-                'dataset_quality', default_result).value,
+            'dataset_quality': round(results.get(
+                'dataset_quality', default_result).value, 2),
             'dataset_quality_latency': results.get(
                 'dataset_quality', default_result).latency_ms,
-            'code_quality': results.get('code_quality', default_result).value,
+            'code_quality': round(
+                results.get('code_quality', default_result).value, 2),
             'code_quality_latency': results.get(
                 'code_quality', default_result).latency_ms
         }
 
     def Evaluate_Net(self, metric_results: Dict[str, MetricResult]
                      ) -> MetricResult:
-        def _prepare_prompt(results: Dict[str, MetricResult]) -> str:
-            metrics_summary = {}
-            for metric_name, result in results.items():
-                if isinstance(result, MetricResult):
-                    metrics_summary[metric_name] = {
-                        "score": round(result.value, 3),
-                        "details": result.details
-                    }
-
-            prompt = """<|begin_of_text|><|start_header_id|>system\
-                <|end_header_id|>
-
-                You are an expert model evaluator. Calculate weighted net \
-                score from metrics.
-                Return ONLY valid JSON.
-
-                <|eot_id|><|start_header_id|>user<|end_header_id|>
-
-                Calculate net score from metrics:
-
-                METRICS:
-                """ + json.dumps(metrics_summary, indent=2) + """
-
-                WEIGHTS: Performance Claims (25%), Code Quality (20%), \
-                Dataset Quality (15%), License (15%), Bus Factor (10%), \
-                Ramp Up Time (10%), Size Score (5%)
-
-                Return ONLY:
-                {
-                "net_score": 0.75,
-                "confidence": 0.85,
-                "reasoning": "Strong performance with good code quality"
-                }
-
-                <|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-            """
-            return prompt
-
-        def _parse_response(response: str) -> Dict[str, Any]:
-            try:
-                clean = response.strip()
-
-                if '<|begin_of_text|>' in clean:
-                    clean = clean.split('<|begin_of_text|>')[-1]
-                if '<|end_of_text|>' in clean:
-                    clean = clean.split('<|end_of_text|>')[0]
-                if 'assistant<|end_header_id|>' in clean:
-                    clean = clean.split('assistant<|end_header_id|>')[-1]
-                if '<|eot_id|>' in clean:
-                    clean = clean.split('<|eot_id|>')[0]
-
-                if clean.startswith("```json"):
-                    clean = clean[7:]
-                elif clean.startswith("```"):
-                    clean = clean[3:]
-                if clean.endswith("```"):
-                    clean = clean[:-3]
-
-                clean = clean.strip()
-                obj = json.loads(clean)
-
-                return {
-                    "net_score": max(0.0, min(1.0, float(
-                        obj.get("net_score", 0.0)))),
-                    "confidence": max(0.0, min(1.0, float(
-                        obj.get("confidence", 0.5)))),
-                    "reasoning": str(obj.get("reasoning", ""))[:300]
-                }
-
-            except Exception as e:
-                logging.warning(f"Parse error: {e}")
-                return {
-                    "net_score": 0.0,
-                    "confidence": 0.0,
-                    "reasoning": f"Parse failed: {str(e)[:100]}"
-                }
-
-        def _fallback_score(results: Dict[str, MetricResult]) -> float:
+        """Calculate weighted net score from individual metric results."""
+        def _calculate_weighted_score(
+                results: Dict[str, MetricResult]) -> Dict[str, Any]:
+            # Define weights for each metric (must sum to 1.0)
             weights = {
-                'performance_claims': 0.25, 'code_quality': 0.20,
-                'dataset_quality': 0.15, 'license': 0.15,
-                'bus_factor': 0.10, 'ramp_up_time': 0.10,
-                'size_score': 0.05
+                'performance_claims': 0.25,  # 25%
+                'code_quality': 0.20,        # 20%
+                'dataset_quality': 0.15,     # 15%
+                'license': 0.15,             # 15%
+                'bus_factor': 0.10,          # 10%
+                'ramp_up_time': 0.10,        # 10%
+                'size_score': 0.05           # 5%
             }
 
-            weighted_sum = total_weight = 0.0
-            for name, weight in weights.items():
-                if name in results and isinstance(results[name], MetricResult):
-                    weighted_sum += results[name].value * weight
+            weighted_sum = 0.0
+            total_weight = 0.0
+            metric_breakdown = {}
+
+            for metric_name, weight in weights.items():
+                if (metric_name in results and
+                        isinstance(results[metric_name], MetricResult)):
+                    metric_value = results[metric_name].value
+                    contribution = metric_value * weight
+                    weighted_sum += contribution
                     total_weight += weight
 
-            return weighted_sum / total_weight if total_weight > 0 else 0.0
+                    metric_breakdown[metric_name] = {
+                        "value": round(metric_value, 3),
+                        "weight": weight,
+                        "contribution": round(contribution, 3)
+                    }
+                else:
+                    metric_breakdown[metric_name] = {
+                        "value": 0.0,
+                        "weight": weight,
+                        "contribution": 0.0
+                    }
+                    total_weight += weight
+
+            net_score = (weighted_sum / total_weight
+                         if total_weight > 0 else 0.0)
+
+            return max(0.0, min(1.0, net_score))
 
         try:
             start_time = time.time()
-            prompt = _prepare_prompt(metric_results)
-            response = self.llm_manager.call_genai_api(
-                prompt, model="llama3.1:latest")
-            parsed = _parse_response(response.content)
+            calculation = _calculate_weighted_score(metric_results)
             end_time = time.time()
             latency_ms = int((end_time - start_time) * 1000)
 
             return MetricResult(
                 metric_type=MetricType.NET_SCORE,
-                value=parsed["net_score"],
+                value=calculation,
                 details={
-                    "mode": "llm_weighted",
-                    "model_used": "llama3.1:latest",
-                    "llm_analysis": parsed,
-                    "fallback_used": False
+                    "mode": "weighted_sum",
+                    "calculation_method": "deterministic",
+                    "weights_used": {
+                        'performance_claims': 0.25,
+                        'code_quality': 0.20,
+                        'dataset_quality': 0.15,
+                        'license': 0.15,
+                        'bus_factor': 0.10,
+                        'ramp_up_time': 0.10,
+                        'size_score': 0.05
+                    },
+                    "breakdown": calculation["metric_breakdown"],
+                    "total_weight": calculation["total_weight"],
+                    "weighted_sum": round(calculation["weighted_sum"], 3)
                 },
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
             )
 
         except Exception as e:
-            logging.error(f"LLM net evaluation failed: {e}")
             start_time = time.time()
-            fallback = _fallback_score(metric_results)
+            simple_average = (
+                sum(r.value for r in metric_results.values()
+                    if isinstance(r, MetricResult)) / len(metric_results)
+                if metric_results else 0.0
+            )
             end_time = time.time()
             latency_ms = int((end_time - start_time) * 1000)
 
             return MetricResult(
                 metric_type=MetricType.NET_SCORE,
-                value=fallback,
+                value=max(0.0, min(1.0, simple_average)),
                 details={
-                    "mode": "fallback_weighted",
+                    "mode": "simple_average_fallback",
                     "error": str(e)[:100],
                     "fallback_used": True
                 },
