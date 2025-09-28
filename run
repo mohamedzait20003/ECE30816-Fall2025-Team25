@@ -47,51 +47,39 @@ install_dependencies() {
 
     print_info "Using Python command: $PYTHON_CMD"
 
-    # Create virtual environment if it doesn't exist
-    if [ ! -d ".venv" ]; then
-        print_info "Creating Python virtual environment in .venv..."
-        $PYTHON_CMD -m venv .venv
-        print_success "Virtual environment created at .venv"
-    else
-        print_info "Using existing virtual environment at .venv"
-    fi
-
-    # Use the venv's python and pip
-    VENV_PY=".venv/bin/python"
-    VENV_PIP=".venv/bin/pip"
-
-    # Upgrade pip in venv
-    $VENV_PY -m pip install --upgrade pip
-
-    # Check if pip is available in venv
-    if ! $VENV_PY -m pip --version &> /dev/null; then
-        print_error "pip is not available in the virtual environment."
+    # Check if pip is available
+    if ! $PYTHON_CMD -m pip --version &> /dev/null; then
+        print_error "pip is not available. Please install pip first."
         exit 1
     fi
 
-    # Install requirements
+    # Install requirements directly (no virtual environment for autograder compatibility)
     if [ -f "requirements.txt" ]; then
-        print_info "Installing packages from requirements.txt into virtual environment..."
-        $VENV_PY -m pip install -r requirements.txt
-        print_success "All dependencies installed successfully in the virtual environment!"
+        print_info "Installing packages from requirements.txt..."
+        $PYTHON_CMD -m pip install -r requirements.txt --user --break-system-packages 2>/dev/null || \
+        $PYTHON_CMD -m pip install -r requirements.txt --user 2>/dev/null || \
+        $PYTHON_CMD -m pip install -r requirements.txt
+        
+        if [ $? -eq 0 ]; then
+            print_success "All dependencies installed successfully!"
+        else
+            print_error "Failed to install dependencies"
+            exit 1
+        fi
     else
         print_error "requirements.txt not found in the current directory"
         exit 1
     fi
 
-    # Check if .env file exists
+    # Check if .env file exists (optional for autograder)
     if [ ! -f "backend/.env" ]; then
         print_warning ".env file not found in backend/ directory"
-        print_info "Please create backend/.env with required API keys:"
-        print_info "  HF_TOKEN=your_huggingface_token"
-        print_info "  GITHUB_TOKEN=your_github_token (optional)"
-        print_info "  PURDUE_LLM_API_URL=your_purdue_llm_url"
+        print_info "Note: Environment variables may be provided by the autograder"
     else
         print_success "Environment file found at backend/.env"
     fi
 
     print_success "Installation completed!"
-    print_info "To activate the virtual environment, run: source .venv/bin/activate"
 }
 
 # Function to run tests
@@ -110,17 +98,27 @@ run_tests() {
         PYTHON_CMD="python"
     fi
     
+    # Check if pytest is installed
+    if ! $PYTHON_CMD -m pytest --version &> /dev/null; then
+        print_error "pytest is not installed. Run './run install' first."
+        exit 1
+    fi
+    
     # Change to backend directory where tests are located
     cd backend
     
     print_info "Running test suite with pytest..."
     print_info "Test files location: backend/src/Testing/"
     
-    # TODO: Actually run tests when ready
-    # $PYTHON_CMD -m pytest src/Testing/ -v --tb=short
+    # Run actual tests
+    $PYTHON_CMD -m pytest src/Testing/ -v --tb=short
     
-    print_success "Test execution completed!"
-    print_info "Note: Actual test execution is not implemented yet"
+    if [ $? -eq 0 ]; then
+        print_success "All tests passed!"
+    else
+        print_error "Some tests failed"
+        exit 1
+    fi
 }
 
 # Function to run evaluation on URL file
@@ -172,12 +170,19 @@ run_evaluation() {
     
     print_success "URL file validation passed!"
     
-    # TODO: Actually run evaluation when ready
-    # cd backend
-    # $PYTHON_CMD src/main.py "$url_file"
+    # Run evaluation
+    print_info "Running evaluation on URLs from $url_file..."
+    cd backend
     
-    print_success "Evaluation execution completed!"
-    print_info "Note: Actual evaluation execution is not implemented yet"
+    # Pass the URL file to the main evaluation script
+    $PYTHON_CMD src/main.py "$url_file"
+    
+    if [ $? -eq 0 ]; then
+        print_success "Evaluation completed successfully!"
+    else
+        print_error "Evaluation failed"
+        exit 1
+    fi
 }
 
 # Function to show usage
