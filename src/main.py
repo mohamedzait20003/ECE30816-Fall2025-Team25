@@ -38,11 +38,15 @@ def parse_url_file(filepath: str) -> List[Dict[str, str]]:
 def extract_urls_from_line(line: str) -> List[str]:
     """Extract URLs from a comma-separated line, handling various formats."""
     urls = []
+    # Handle different line formats
+    # Remove all leading commas and whitespace from the entire line
+    cleaned_line = line.lstrip(', \t')
+    
     # Split by comma and clean up each URL
-    parts = line.split(',')
+    parts = cleaned_line.split(',')
     for part in parts:
         url = part.strip()
-        # Remove leading commas or whitespace
+        # Remove any remaining leading commas or whitespace
         while url.startswith(','):
             url = url[1:].strip()
         if url and url.startswith('http'):
@@ -98,28 +102,27 @@ if __name__ == "__main__":
     fetcher = Controller()
     model_metric_service = ModelMetricService()
 
-    if urls["models"]:
-        model_link = urls["models"][0]
-    else:
+    if not urls["models"]:
         print("No model URLs found in input file")
         sys.exit(1)
 
     dataset_links = urls["datasets"] if urls["datasets"] else []
     code_link = urls["code"][0] if urls["code"] else None
 
-    try:
-        model_data = fetcher.fetch(
-            model_link,
-            dataset_links=dataset_links,
-            code_link=code_link
-        )
+    for model_link in urls["models"]:
+        try:
+            model_data = fetcher.fetch(
+                model_link,
+                dataset_links=dataset_links,
+                code_link=code_link
+            )
 
-        evaluation = model_metric_service.EvaluateModel(model_data)
-        json_output = json.dumps(evaluation, separators=(',', ':'),
-                                 ensure_ascii=False)
+            evaluation = model_metric_service.EvaluateModel(model_data)
+            json_output = json.dumps(evaluation, separators=(',', ':'),
+                                     ensure_ascii=False)
 
-        print(json_output.strip())
+            print(json_output.strip())
 
-    except Exception as e:
-        print(f"Error during evaluation: {e}")
-        sys.exit(1)
+        except Exception as e:
+            print(f"Error evaluating model {model_link}: {e}", file=sys.stderr)
+            continue
