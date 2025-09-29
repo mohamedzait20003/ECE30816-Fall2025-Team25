@@ -72,11 +72,11 @@ install_dependencies() {
     fi
 
     # Check if .env file exists (optional for autograder)
-    if [ ! -f ".env" ]; then
-        print_warning ".env file not found in  directory"
+    if [ ! -f "backend/.env" ]; then
+        print_warning ".env file not found in backend/ directory"
         print_info "Note: Environment variables may be provided by the autograder"
     else
-        print_success "Environment file found at .env"
+        print_success "Environment file found at backend/.env"
     fi
 
     print_success "Installation completed!"
@@ -104,8 +104,11 @@ run_tests() {
         exit 1
     fi
     
+    # Change to backend directory where tests are located
+    cd backend
+    
     print_info "Running test suite with pytest..."
-    print_info "Test files location: src/Testing/"
+    print_info "Test files location: backend/src/Testing/"
     
     # Run actual tests
     $PYTHON_CMD -m pytest src/Testing/ -v --tb=short
@@ -169,6 +172,7 @@ run_evaluation() {
     
     # Run evaluation
     print_info "Running evaluation on URLs from $url_file..."
+    cd backend
     
     # Pass the URL file to the main evaluation script
     $PYTHON_CMD src/main.py "$url_file"
