@@ -35,47 +35,41 @@ def parse_url_file(filepath: str) -> List[Dict[str, str]]:
     return results
 
 
-def extract_urls_from_line(line: str) -> List[str]:
-    """Extract URLs from a comma-separated line, handling various formats."""
-    urls = []
-    # Handle different line formats
-    # Remove all leading commas and whitespace from the entire line
-    cleaned_line = line.lstrip(', \t')
-    
-    # Split by comma and clean up each URL
-    parts = cleaned_line.split(',')
-    for part in parts:
-        url = part.strip()
-        # Remove any remaining leading commas or whitespace
-        while url.startswith(','):
-            url = url[1:].strip()
-        if url and url.startswith('http'):
-            urls.append(url)
-    return urls
-
-
-def process_input_file(filepath: str) -> Dict[str, List[str]]:
-    """Process input file and categorize URLs."""
-    dataset_links = []
-    model_links = []
-    code_links = []
+def process_url_file(filepath: str) -> List[Dict[str, any]]:
+    """
+    Process URL file sequentially where dataset and code URLs
+    are linked to the next model URL that appears.
+    """
+    model_configs = []
+    current_datasets = []
+    current_code = None
     
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in f:
-                line = line.strip()
-                if not line:
+                url = line.strip()
+                if not url:
                     continue
-                
-                urls = extract_urls_from_line(line)
-                for url in urls:
-                    category = classify_url(url)
-                    if category == "dataset":
-                        dataset_links.append(url)
-                    elif category == "model":
-                        model_links.append(url)
-                    elif category == "code":
-                        code_links.append(url)
+
+                category = classify_url(url)
+
+                if category == "dataset":
+                    current_datasets.append(url)
+                elif category == "code":
+                    current_code = url
+                elif category == "model":
+                    model_config = {
+                        "model_url": url,
+                        "dataset_urls": current_datasets[:],  # Copy the list
+                        "code_url": current_code
+                    }
+                    model_configs.append(model_config)
+                    
+                    # Reset for next model (keep same dataset/code links
+                    # unless new ones are specified)
+                    # According to spec, links apply to the next model URL
+                    current_datasets = []
+                    current_code = None
     
     except FileNotFoundError:
         print(f"Error: File '{filepath}' not found")
@@ -84,11 +78,7 @@ def process_input_file(filepath: str) -> Dict[str, List[str]]:
         print(f"Error reading file '{filepath}': {e}")
         sys.exit(1)
     
-    return {
-        "datasets": dataset_links,
-        "models": model_links,
-        "code": code_links
-    }
+    return model_configs
 
 
 if __name__ == "__main__":
@@ -97,38 +87,32 @@ if __name__ == "__main__":
         sys.exit(1)
 
     input_file = sys.argv[1]
-    urls = process_input_file(input_file)
+    model_configs = process_url_file(input_file)
 
     fetcher = Controller()
     model_metric_service = ModelMetricService()
 
-    if not urls["models"]:
+    if not model_configs:
         print("No model URLs found in input file")
         sys.exit(1)
 
-    dataset_links = urls["datasets"] if urls["datasets"] else []
-    code_link = urls["code"][0] if urls["code"] else None
-
-    # Collect all model evaluations
-    all_evaluations = []
-    
-    for model_link in urls["models"]:
+    # Process each model with its associated dataset and code links
+    for config in model_configs:
         try:
             model_data = fetcher.fetch(
-                model_link,
-                dataset_links=dataset_links,
-                code_link=code_link
+                config["model_url"],
+                dataset_links=config["dataset_urls"],
+                code_link=config["code_url"]
             )
 
             evaluation = model_metric_service.EvaluateModel(model_data)
-            all_evaluations.append(evaluation)
+            
+            # Output immediately for each model (NDJSON format)
+            json_output = json.dumps(evaluation, separators=(',', ':'),
+                                     ensure_ascii=False)
+            print(json_output.strip())
 
         except Exception as e:
-            print(f"Error evaluating model {model_link}: {e}", file=sys.stderr)
-            continue
-    
-    # Print all results once
-    for evaluation in all_evaluations:
-        json_output = json.dumps(evaluation, separators=(',', ':'),
-                                 ensure_ascii=False)
-        print(json_output.strip())
+            print(f"Error evaluating model {config['model_url']}: {e}",
+                  file=sys.stderr)
+            sys.exit(1)  # Exit with error code on failure
