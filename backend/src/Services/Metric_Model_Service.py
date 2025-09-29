@@ -49,36 +49,33 @@ class ModelMetricService:
             assert isinstance(data, Model)
             text = _compose_source_text(data)
             return (
-                "OUTPUT FORMAT: JSON ONLY\n\n"
-                "Analyze the model documentation and return this exact JSON "
-                "format:\n\n"
+                "You are assessing a model card/README for performance claims. "
+                "Be recall-oriented and generous. Consider any reasonable hints: "
+                "named benchmarks, numbers (accuracy/F1/BLEU/etc.), tables, or "
+                "comparisons to baselines/SoTA/leaderboards.\n\n"
+                "Output STRICT JSON ONLY with two fields:\n"
                 "{\n"
-                '  "has_benchmark_datasets": true|false,\n'
-                '  "has_quantitative_results": true|false,\n'
-                '  "has_baseline_or_sota_comparison": true|false,\n'
-                '  "notes": "Found GLUE scores and baseline comparisons"\n'
+                '  "score": <float between 0.0 and 1.0>,\n'
+                '  "notes": "very brief rationale (<=200 chars)"\n'
                 "}\n\n"
-                "Criteria:\n"
-                "- has_benchmark_datasets: true if mentions datasets like "
-                "GLUE, SQuAD, ImageNet, MMLU\n"
-                "- has_quantitative_results: true if shows accuracy, F1, "
-                "BLEU scores or metrics tables\n"
-                "- has_baseline_or_sota_comparison: true if compares to "
-                "other models/baselines\n\n"
-                f"ANALYZE THIS TEXT:\n{text[:8000]}\n\n"
-                "RESPOND WITH JSON ONLY:"
+                "Scoring guidance (soft, not exact):\n"
+                "- 0.00–0.20: No claims or evidence.\n"
+                "- 0.21–0.50: Mentions benchmarks OR some metrics/figures.\n"
+                "- 0.51–0.80: Clear metrics/tables and some comparison signals.\n"
+                "- 0.81–1.00: Strong metrics+tabled results and explicit baselines/"
+                "SoTA/leaderboard links.\n"
+                "When uncertain, prefer a higher score (recall > precision).\n\n"
+                "Answer with JSON only. No prose.\n"
+                "=== BEGIN TEXT ===\n"
+                f"{text[:8000]}\n"
+                "=== END TEXT ===\n"
             )
 
         def parse_llm_response(response: str) -> Dict[str, Any]:
             try:
                 if not response or not response.strip():
                     logging.warning("Empty LLM response received")
-                    return {
-                        "has_benchmark_datasets": False,
-                        "has_quantitative_results": False,
-                        "has_baseline_or_sota_comparison": False,
-                        "notes": "Empty response from LLM"
-                    }
+                    return {"score": 0.0, "notes": "Empty response from LLM"}
                 
                 # Strip markdown code block formatting if present
                 clean_response = response.strip()
@@ -91,27 +88,28 @@ class ModelMetricService:
                 clean_response = clean_response.strip()
                 
                 obj = json.loads(clean_response)
+
+                score = obj.get("score", 0.0)
+
+                try:
+                    score = float(score)
+                except (TypeError, ValueError):
+                    score = 0.0
+
+                score = max(0.0, min(1.0, score))
+
                 return {
-                    "has_benchmark_datasets": bool(
-                        obj.get("has_benchmark_datasets", False)
-                    ),
-                    "has_quantitative_results": bool(
-                        obj.get("has_quantitative_results", False)
-                    ),
-                    "has_baseline_or_sota_comparison": bool(
-                        obj.get("has_baseline_or_sota_comparison", False)
-                    ),
+                    "score": score,
                     "notes": str(obj.get("notes", ""))[:400],
                 }
+            
             except json.JSONDecodeError as e:
                 logging.warning(f"Failed to parse LLM response as JSON: {e}")
                 logging.warning(f"Raw response: {response[:200]}...")
                 return {
-                    "has_benchmark_datasets": False,
-                    "has_quantitative_results": False,
-                    "has_baseline_or_sota_comparison": False,
+                    "score": 0.0,
                     "notes": f"JSON parse error: {str(e)[:100]}"
-                }
+        }
 
         try:
             prompt = prepare_llm_prompt(Data)
