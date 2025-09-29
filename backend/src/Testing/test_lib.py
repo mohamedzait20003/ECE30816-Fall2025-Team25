@@ -329,8 +329,9 @@ class TestAPIIntegration:
         """Test that API manager errors don't affect each other."""
         try:
             with patch('lib.Github_API_Manager.requests.get',
-                      side_effect=Exception("GitHub error")):
+                       side_effect=Exception("GitHub error")):
                 github_manager = GitHubAPIManager()
+                assert github_manager is not None
                 
                 # HuggingFace manager should still work
                 hf_manager = HuggingFaceAPIManager()
