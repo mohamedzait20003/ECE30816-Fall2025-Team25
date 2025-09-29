@@ -77,7 +77,7 @@ def process_url_file(filepath: str) -> List[Dict[str, any]]:
     except Exception as e:
         print(f"Error reading file '{filepath}': {e}")
         sys.exit(1)
-    
+
     return model_configs
 
 
