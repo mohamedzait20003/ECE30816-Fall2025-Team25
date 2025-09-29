@@ -126,15 +126,8 @@ class ModelMetricService:
                 
             parsed = parse_llm_response(response_text)
 
-            score = 0.0
-            if parsed["has_benchmark_datasets"]:
-                score += 0.3
-            if parsed["has_quantitative_results"]:
-                score += 0.4
-            if parsed["has_baseline_or_sota_comparison"]:
-                score += 0.3
-            if score > 1.0:
-                score = 1.0
+            # Use the score directly from the LLM response
+            score = parsed.get("score", 0.0)
 
             details = {"mode": "llm", **parsed}
 
